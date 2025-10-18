@@ -1,0 +1,14 @@
+fastapi[all]
+sqlalchemy
+alembic
+asyncpg
+psycopg2-binary
+python-dotenv
+boto3
+sentence-transformers
+pgvector
+sqladmin
+pydantic
+sqlmodel
+httpx
+beautifulsoup4
