@@ -41,7 +41,6 @@ class Project(SQLModel, table=True):
     
     github_url: str = Field(max_length=255)
     homepage_url: Optional[str] = Field(default=None, max_length=255)
-    has_homepage: bool = Field(default=False, index=True)
     readme_content: Optional[str] = Field(default=None, sa_column=Column(Text))
     project_embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
     last_indexed_at: datetime = Field(

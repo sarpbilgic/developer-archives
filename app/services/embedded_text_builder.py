@@ -1,5 +1,6 @@
 # app/services/embedding_text_builder.py
 
+import base64
 from typing import Dict, Any, Optional
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
