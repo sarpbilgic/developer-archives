@@ -1,0 +1,28 @@
+FROM public.ecr.aws/lambda/python:3.11-arm64
+WORKDIR /var/task
+
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TOKENIZERS_PARALLELISM=false OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+
+COPY requirements-processor.txt .
+RUN python -m pip install --upgrade pip && \
+    pip install --only-binary=:all: --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --only-binary=:all: --no-cache-dir -r requirements-processor.txt && \
+    pip install --no-cache-dir sentence-transformers
+
+# (Önerilen) modeli build aşamasında göm:
+RUN python - << 'PY'
+from sentence_transformers import SentenceTransformer
+m = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+m.save("/opt/model")
+print("saved /opt/model")
+PY
+
+COPY app/ /var/task/app/
+
+# Set environment variables for offline model usage
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    MODEL_PATH=/opt/model
+
+CMD ["app.tasks.processor.handler"]

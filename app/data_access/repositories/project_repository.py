@@ -6,7 +6,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import select
 
-from app.core.models import Project
+from app.models.project import Project
 
 class ProjectRepository:
     """
@@ -38,8 +38,9 @@ class ProjectRepository:
             includes any database-generated values (like the ID).
         """
         # 1. Convert the SQLModel object into a dictionary.
-        #    'exclude_unset=True' is an optimization to only include fields that were set.
-        project_data = project.dict(exclude_unset=True)
+        #    exclude_none=True removes None values (like id for new inserts)
+        #    This ensures last_indexed_at (with default_factory) is included
+        project_data = project.dict(exclude_none=True)
 
         # 2. Build the core 'INSERT' statement using SQLAlchemy's PostgreSQL dialect.
         insert_stmt = pg_insert(Project).values(**project_data)

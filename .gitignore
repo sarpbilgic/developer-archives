@@ -11,3 +11,10 @@ __pycache__/
 .env.development
 .env.test
 .env.production
+requirements-lambda-minimal.txt
+requirements-processor.txt
+lambda_packages/
+manuel_ingest.py
+tests/
+lambda_deployers/
+scripts/

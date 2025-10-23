@@ -13,6 +13,11 @@ class GitHubClient:
     """
     A robust, production-ready client for interacting with the GitHub API.
     Handles authentication, rate limiting, error handling, and discovery.
+    
+    CONCURRENCY CONTROL:
+    - Uses asyncio.Semaphore to limit parallel API calls
+    - Prevents sudden rate limit spikes across multiple Lambda instances
+    - Reduces 403 errors and retry overhead
     """
     BASE_URL = "https://api.github.com"
 
@@ -31,28 +36,48 @@ class GitHubClient:
             follow_redirects=True,
             timeout=20.0 # Increase timeout for potentially slower search APIs
         )
+        
+        # Semaphore to limit concurrent API calls
+        # Even though we have 5000 req/hr, limiting concurrency prevents:
+        # - Sudden spikes that trigger 403 errors
+        # - Multiple Lambda instances overwhelming the rate limit
+        # - Connection pool exhaustion
+        self._api_semaphore = asyncio.Semaphore(3)  # Max 3 concurrent API calls per instance
 
     async def _make_request(self, method: str, url: str, **kwargs) -> httpx.Response:
         """
         Internal method to make a request and handle rate limiting.
+        
+        IMPROVED STRATEGY:
+        - Uses semaphore to limit concurrent calls (prevents spikes)
+        - Only pauses when CRITICALLY low (< 5 remaining)
+        - Log warnings for monitoring but DON'T block unnecessarily
+        - Let multiple Lambda instances share the rate limit pool
         """
-        response = await self._client.request(method, url, **kwargs)
-        
-        # --- INTELLIGENT RATE LIMIT HANDLING ---
-        remaining = int(response.headers.get("X-RateLimit-Remaining", 1))
-        if remaining < 20: # Use a safe buffer
-            reset_timestamp = int(response.headers.get("X-RateLimit-Reset", 0))
-            reset_time = datetime.fromtimestamp(reset_timestamp, tz=timezone.utc)
-            now = datetime.now(timezone.utc)
-            sleep_duration = (reset_time - now).total_seconds()
+        async with self._api_semaphore:  # Limit concurrent API calls
+            response = await self._client.request(method, url, **kwargs)
             
-            if sleep_duration > 0:
-                print(f"WARNING: GitHub API rate limit low ({remaining} left). Pausing for {sleep_duration:.2f} seconds.")
-                await asyncio.sleep(sleep_duration + 1) # Add 1s buffer
-        # --- -------------------------------- ---
-        
-        response.raise_for_status() # Raise an exception for 4xx/5xx errors
-        return response
+            # --- INTELLIGENT RATE LIMIT HANDLING ---
+            remaining = int(response.headers.get("X-RateLimit-Remaining", 1))
+            
+            # Warning threshold: Log but don't block
+            if remaining < 100:
+                print(f"INFO: GitHub API rate limit at {remaining} requests remaining")
+            
+            # CRITICAL threshold: Only pause when truly necessary
+            if remaining < 5:
+                reset_timestamp = int(response.headers.get("X-RateLimit-Reset", 0))
+                reset_time = datetime.fromtimestamp(reset_timestamp, tz=timezone.utc)
+                now = datetime.now(timezone.utc)
+                sleep_duration = (reset_time - now).total_seconds()
+                
+                if sleep_duration > 0:
+                    print(f"CRITICAL: GitHub API rate limit critically low ({remaining} left). Pausing for {sleep_duration:.2f} seconds.")
+                    await asyncio.sleep(sleep_duration + 2) # Add 2s buffer
+            # --- -------------------------------- ---
+            
+            response.raise_for_status() # Raise an exception for 4xx/5xx errors
+            return response
 
     async def search_repositories(
         self, 

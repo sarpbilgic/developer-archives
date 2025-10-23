@@ -56,7 +56,7 @@ LANGUAGES_TO_CYCLE = list(LANGUAGE_CONFIG.keys())
 
 # --- AWS Clients (Configured from settings) ---
 SQS_QUEUE_URL = settings.sqs_queue_url
-DYNAMODB_TABLE_NAME = settings.dynamodb_state_table_name
+DYNAMODB_TABLE_NAME = settings.dynamodb_table_name
 AWS_REGION = settings.aws_region
 
 # Initialize AWS clients only if configuration is available
@@ -85,11 +85,11 @@ async def get_discovery_state(language: str) -> Tuple[int, int, bool]:
         count = int(item.get("count", 0))
         completed = bool(item.get("completed", False))
         # GitHub Search API returns max 1000 results (10 pages of 100) for any query.
-        # If page > 10, it means we've exhausted results for this query configuration.
+        # If page > 10, reset to page 1 and continue (different time periods will find new repos)
         if page > 10:
-            print(f"INFO: Page number for {language} exceeded 10. Marking as completed for this cycle.")
-            completed = True
-            page = 1 # Reset page for potential future runs with different criteria
+            print(f"INFO: Page number for {language} exceeded 10. Resetting to page 1 to continue discovery.")
+            page = 1 # Reset page - time-based query will find different repos
+            # Don't mark as completed - keep discovering until target is reached
         return page, count, completed
     except Exception as e:
         print(f"ERROR: Failed to read state for {language}: {e}")
@@ -119,7 +119,7 @@ async def select_next_language_to_search() -> Optional[str]:
     if not state_table: return random.choice(LANGUAGES_TO_CYCLE) # Fallback
     try:
         cursor_item = state_table.get_item(Key={"language": "__CURSOR__"}).get("Item", {})
-        current_index = cursor_item.get("index", -1)
+        current_index = int(cursor_item.get("index", -1))  # DynamoDB returns Decimal, convert to int
         
         # Try to find the next non-completed language
         for i in range(len(LANGUAGES_TO_CYCLE)):
@@ -220,6 +220,7 @@ def is_candidate_high_quality(repo_data: Dict[str, Any], config: Dict) -> bool:
         return False
 
     # Filter 3: Must have a license (indicates serious/professional project)
+    # Essential for legal use and indicates project maturity
     if not repo_data.get("license"):
         return False
     
@@ -229,14 +230,15 @@ def is_candidate_high_quality(repo_data: Dict[str, Any], config: Dict) -> bool:
     if not description or len(description.split()) < min_desc_words:
         return False
         
-    # Filter 5: Must have topics (indicates proper tagging/discoverability)
-    topics = repo_data.get("topics", [])
-    if not topics or len(topics) < 2:  # At least 2 topics
-        return False
-
+    # Filter 5: Topics preferred but not mandatory (gives points in quality score)
+    # Older repos often lack topics but are still valuable
+    # We'll be lenient here
+    
     # Filter 6: Minimum fork count (indicates usefulness/adoption)
+    # Reduced threshold for better coverage
     min_forks = config.get("min_forks", 20)
-    if repo_data.get("forks_count", 0) < min_forks:
+    actual_min_forks = max(10, min_forks - 10)  # At least 10 forks, or config - 10
+    if repo_data.get("forks_count", 0) < actual_min_forks:
         return False
 
     # Filter 7: Must have README (GitHub Search API includes this in results)
@@ -272,7 +274,9 @@ def is_candidate_high_quality(repo_data: Dict[str, Any], config: Dict) -> bool:
     # === SOFT FILTER: Quality Score ===
     # Calculate overall quality score and reject if too low
     quality_score = calculate_quality_score(repo_data)
-    MIN_QUALITY_SCORE = 40  # Out of 100 - adjust based on results
+    MIN_QUALITY_SCORE = 30  # Out of 100 - lowered for better coverage (was 40)
+    # With relaxed filters, quality score becomes more important
+    # Score 30+ ensures: decent stars/forks, some activity, basic documentation
     
     if quality_score < MIN_QUALITY_SCORE:
         return False
@@ -281,27 +285,99 @@ def is_candidate_high_quality(repo_data: Dict[str, Any], config: Dict) -> bool:
 
 # --- Main Discovery Logic ---
 
+async def process_single_page(language: str, config: Dict, query: str, page: int) -> Tuple[int, int, List[float], bool]:
+    """
+    Process a single page of search results.
+    
+    Returns:
+        (processed_count, skipped_count, quality_scores, has_more_results)
+    """
+    print(f"  Searching page {page} for {language}...")
+    search_results = await github_client.search_repositories(
+        query=query, 
+        page=page, 
+        per_page=100,
+        sort="stars", 
+        order="desc"
+    )
+
+    items = search_results.get("items", []) if search_results else []
+    
+    if not items:
+        print(f"  No results on page {page}")
+        return 0, 0, [], False
+
+    # Process, filter, and queue results
+    messages_to_queue = []
+    processed = 0
+    skipped = 0
+    scores = []
+
+    for repo in items:
+        repo_name = repo.get("full_name", "unknown")
+        quality_score = calculate_quality_score(repo)
+        scores.append(quality_score)
+        
+        if is_candidate_high_quality(repo, config):
+            full_name = repo.get("full_name")
+            if full_name:
+                messages_to_queue.append({
+                    'Id': full_name.replace('/', '-').replace('.', '_'),
+                    'MessageBody': json.dumps({
+                        "full_name": full_name,
+                        "quality_score": round(quality_score, 2),
+                        "stars": repo.get("stargazers_count", 0)
+                    })
+                })
+                processed += 1
+                
+                if quality_score >= 70:
+                    print(f"    ⭐ {full_name} (score: {quality_score:.1f})")
+                
+                if len(messages_to_queue) == 10:
+                    try:
+                        sqs_client.send_message_batch(QueueUrl=SQS_QUEUE_URL, Entries=messages_to_queue)
+                        messages_to_queue = []
+                    except Exception as e:
+                        print(f"    ERROR: SQS batch failed: {e}")
+        else:
+            skipped += 1
+
+    # Send remaining messages
+    if messages_to_queue:
+        try:
+            sqs_client.send_message_batch(QueueUrl=SQS_QUEUE_URL, Entries=messages_to_queue)
+        except Exception as e:
+            print(f"    ERROR: Final SQS batch failed: {e}")
+
+    has_more = len(items) == 100  # Full page = more results likely available
+    return processed, skipped, scores, has_more
+
+
 async def discover_and_queue():
     """
     Main orchestration logic for the Discoverer task.
+    NOW PROCESSES MULTIPLE PAGES PER INVOCATION for 10x throughput!
     """
     if not sqs_client or not state_table:
         print("FATAL: AWS clients not initialized. Aborting.")
         return
 
     language = await select_next_language_to_search()
-    if not language: return
+    if not language: 
+        print("INFO: All languages completed for this cycle.")
+        return
         
-    page, current_count, completed = await get_discovery_state(language)
+    start_page, current_count, completed = await get_discovery_state(language)
     config = LANGUAGE_CONFIG[language]
 
     if completed or current_count >= config["target"]:
         print(f"INFO: Target {config['target']} reached or cycle completed for {language}. Skipping.")
-        if not completed: # Mark as complete if target is reached
+        if not completed:
              await update_discovery_state(language, 1, current_count, True)
         return
 
-    # --- Construct GitHub Search Query ---
+    # Construct GitHub Search Query
     lang_query_name = config.get("query_name", language.lower())
     two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
     query = (
@@ -311,85 +387,74 @@ async def discover_and_queue():
         f"pushed:>{two_years_ago}"
     )
     
-    print(f"Searching GitHub: '{query}', Page: {page}")
-    search_results = await github_client.search_repositories(
-        query=query, 
-        page=page, 
-        per_page=100, # Request max allowed per page
-        sort="stars", 
-        order="desc"
-    )
-
-    items = search_results.get("items", []) if search_results else []
+    print(f"\n{'='*80}")
+    print(f"DISCOVERING: {language} (starting page {start_page})")
+    print(f"Query: {query}")
+    print(f"Progress: {current_count}/{config['target']} repos queued")
+    print(f"{'='*80}\n")
     
-    if not items:
-        print(f"INFO: No results found for {language} on page {page}. Marking as completed for cycle.")
-        await update_discovery_state(language, 1, current_count, True) # Mark completed
-        return
-
-    # --- Process, Filter, and Queue Results ---
-    messages_to_queue = []
-    processed_in_batch = 0
-    skipped_in_batch = 0
-    quality_scores = []  # Track quality scores for statistics
-
-    for repo in items:
-        repo_name = repo.get("full_name", "unknown")
-        quality_score = calculate_quality_score(repo)
-        quality_scores.append(quality_score)
+    # PROCESS MULTIPLE PAGES (10 pages = 1000 repos max per invocation)
+    PAGES_PER_INVOCATION = 10
+    total_processed = 0
+    total_skipped = 0
+    all_quality_scores = []
+    current_page = start_page
+    
+    for page_offset in range(PAGES_PER_INVOCATION):
+        page = start_page + page_offset
         
-        if is_candidate_high_quality(repo, config):
-            full_name = repo.get("full_name")
-            if full_name:
-                messages_to_queue.append({
-                    'Id': full_name.replace('/', '-').replace('.', '_'), # Make ID SQS Batch compatible
-                    'MessageBody': json.dumps({
-                        "full_name": full_name,
-                        "quality_score": round(quality_score, 2),
-                        "stars": repo.get("stargazers_count", 0)
-                    })
-                })
-                processed_in_batch += 1
-                
-                # Log high-quality candidates (for monitoring)
-                if quality_score >= 70:
-                    print(f"  ⭐ EXCELLENT: {full_name} (score: {quality_score:.1f}, stars: {repo.get('stargazers_count', 0)})")
-                
-                if len(messages_to_queue) == 10: # Send in batches of 10
-                    try:
-                        sqs_client.send_message_batch(QueueUrl=SQS_QUEUE_URL, Entries=messages_to_queue)
-                        messages_to_queue = []
-                    except Exception as e:
-                        print(f"ERROR: Failed to send batch to SQS: {e}")
-                        # Consider breaking or logging failed IDs
-        else:
-            skipped_in_batch += 1
-
-    # Send any remaining messages
-    if messages_to_queue:
-        try:
-            sqs_client.send_message_batch(QueueUrl=SQS_QUEUE_URL, Entries=messages_to_queue)
-        except Exception as e:
-            print(f"ERROR: Failed to send final batch to SQS: {e}")
-
-    # --- Log Statistics ---
-    avg_score = sum(quality_scores) / len(quality_scores) if quality_scores else 0
-    max_score = max(quality_scores) if quality_scores else 0
-    min_score = min(quality_scores) if quality_scores else 0
-    acceptance_rate = (processed_in_batch / len(items) * 100) if items else 0
+        # Stop if we've exceeded GitHub's 1000 result limit (page 10)
+        # On next invocation, page will reset to 1 (see get_discovery_state)
+        if page > 10:
+            print(f"  Reached GitHub page limit (10). Will reset to page 1 on next run.")
+            break
+        
+        # Stop if we've reached target
+        if current_count + total_processed >= config["target"]:
+            print(f"  Reached target {config['target']} repos. Stopping discovery for {language}.")
+            completed = True
+            break
+        
+        # Process this page
+        processed, skipped, scores, has_more = await process_single_page(
+            language, config, query, page
+        )
+        
+        total_processed += processed
+        total_skipped += skipped
+        all_quality_scores.extend(scores)
+        current_page = page + 1
+        
+        # Stop if no more results available
+        if not has_more:
+            print(f"  No more results available after page {page}. Marking as complete.")
+            completed = True
+            break
     
-    print(f"Batch completed for {language} page {page}:")
-    print(f"Queued: {processed_in_batch} | Skipped: {skipped_in_batch} | Acceptance Rate: {acceptance_rate:.1f}%")
-    print(f"Quality Scores - Avg: {avg_score:.1f} | Max: {max_score:.1f} | Min: {min_score:.1f}")
-
-    # --- Update State for Next Run ---
-    new_page = page + 1
-    new_count = current_count + processed_in_batch
-    # Check completion based on target OR if we got less results than requested (likely last page)
-    is_complete_for_cycle = new_count >= config["target"] or len(items) < 100 or new_page > 10
+    # Log summary statistics
+    avg_score = sum(all_quality_scores) / len(all_quality_scores) if all_quality_scores else 0
+    max_score = max(all_quality_scores) if all_quality_scores else 0
+    acceptance_rate = (total_processed / (total_processed + total_skipped) * 100) if (total_processed + total_skipped) > 0 else 0
     
-    await update_discovery_state(language, new_page if not is_complete_for_cycle else 1, new_count, is_complete_for_cycle)
-    print(f"State updated for {language}: Next page {new_page if not is_complete_for_cycle else 1}, Total found {new_count}/{config['target']}, Completed cycle: {is_complete_for_cycle}")
+    print(f"\n{'='*80}")
+    print(f"SUMMARY for {language}:")
+    print(f"  Pages processed: {start_page} → {current_page - 1} ({current_page - start_page} pages)")
+    print(f"  Repos queued: {total_processed}")
+    print(f"  Repos skipped: {total_skipped}")
+    print(f"  Acceptance rate: {acceptance_rate:.1f}%")
+    print(f"  Quality scores - Avg: {avg_score:.1f} | Max: {max_score:.1f}")
+    print(f"  Total progress: {current_count + total_processed}/{config['target']}")
+    print(f"  Cycle completed: {completed}")
+    print(f"{'='*80}\n")
+
+    # Update state
+    new_count = current_count + total_processed
+    await update_discovery_state(
+        language, 
+        current_page if not completed else 1, 
+        new_count, 
+        completed
+    )
 
 # --- AWS Lambda Handler ---
 def handler(event, context):

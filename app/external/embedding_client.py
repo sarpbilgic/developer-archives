@@ -1,5 +1,6 @@
 # app/external/embedding_client.py
 
+import os
 from sentence_transformers import SentenceTransformer
 from typing import List, Optional
 
@@ -10,23 +11,31 @@ class EmbeddingClient:
     This class is designed to be a singleton, loading the heavyweight model only once
     when the application starts, and then providing fast embedding generation on demand.
     """
-    def __init__(self, model_name: str = 'all-mpnet-base-v2'):
+    def __init__(self, model_name: str = 'all-mpnet-base-v2', model_path: str = None):
         """
         Initializes the client and loads the specified sentence-transformer model.
         This is a slow, one-time operation.
         
         Args:
             model_name: The name of the model to load from Hugging Face.
+            model_path: Optional path to a pre-downloaded model (for Lambda/offline use).
         """
-        # This print statement is very useful for debugging. You will see it once
-        # when your FastAPI application starts up.
-        print(f"INFO: Loading embedding model: '{model_name}'... (This may take a moment)")
+        # Check if we're in Lambda with pre-loaded model
+        if model_path is None:
+            model_path = os.getenv('MODEL_PATH', '/opt/model')
         
-        # Load the model from the sentence-transformers library.
-        # It will be downloaded from the internet the first time it's used.
-        self.model = SentenceTransformer(model_name)
-        
-        print(f"INFO: Embedding model '{model_name}' loaded successfully.")
+        # Try to load from pre-downloaded path first (Lambda optimization)
+        if os.path.exists(model_path):
+            print(f"INFO: Loading pre-cached embedding model from {model_path}...")
+            self.model = SentenceTransformer(model_path)
+            print(f"INFO: Embedding model loaded from cache successfully.")
+        else:
+            # Fallback: Load from HuggingFace (for local development)
+            print(f"INFO: Loading embedding model: '{model_name}'... (This may take a moment)")
+            # Load the model from the sentence-transformers library.
+            # It will be downloaded from the internet the first time it's used.
+            self.model = SentenceTransformer(model_name)
+            print(f"INFO: Embedding model '{model_name}' loaded successfully.")
 
     def get_embedding(self, text: str) -> Optional[List[float]]:
         """

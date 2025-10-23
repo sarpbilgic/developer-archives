@@ -1,5 +1,3 @@
-# settings.py (DÜZELTİLMİŞ)
-
 import os
 import boto3
 from dotenv import load_dotenv
@@ -17,6 +15,7 @@ class Settings:
         self.github_api_token = os.getenv("GITHUB_API_TOKEN")
         self.sqs_queue_url = os.getenv("SQS_URL")
         self.dynamodb_table_name = os.getenv("DYNAMODB_TABLE_NAME")
+        self.s3_readme_bucket = os.getenv("S3_README_BUCKET")  
     
         if self.db_host is None:
             print("Local .env file not found. Loading settings from AWS Parameter Store...")
@@ -43,6 +42,7 @@ class Settings:
         self.aws_region = get_parameter('/dev/developer-archives/AWS_REGION')
         self.sqs_queue_url = get_parameter('/dev/developer-archives/SQS_URL')
         self.dynamodb_table_name = get_parameter('/dev/developer-archives/DYNAMODB_TABLE_NAME')
+        self.s3_readme_bucket = get_parameter('/dev/developer-archives/S3_README_BUCKET')  
 
         self.db_password = get_parameter('/dev/developer-archives/DB_PASSWORD', with_decryption=True)
         self.github_api_token = get_parameter('/dev/developer-archives/GITHUB_API_TOKEN', with_decryption=True)
@@ -50,6 +50,9 @@ class Settings:
 
     @property
     def database_url(self) -> str:
+        """Dynamically builds the database URL after settings are loaded."""
+        if not all([self.db_username, self.db_password, self.db_host, self.db_port, self.db_name]):
+             raise ValueError("Database connection details are missing.")
         return (
             f"postgresql+asyncpg://{self.db_username}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"

@@ -41,7 +41,13 @@ class Project(SQLModel, table=True):
     
     github_url: str = Field(max_length=255)
     homepage_url: Optional[str] = Field(default=None, max_length=255)
-    readme_content: Optional[str] = Field(default=None, sa_column=Column(Text))
+    
+    # README storage (NEW: S3 hybrid approach)
+    readme_s3_key: Optional[str] = Field(default=None, max_length=500, index=True)
+    readme_word_count: Optional[int] = Field(default=None)  # Metadata for analytics
+    readme_content: Optional[str] = Field(default=None, sa_column=Column(Text))  # DEPRECATED: kept for backward compatibility
+    
+    # Primary embedding (single vector combining all search-relevant info)
     project_embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
     last_indexed_at: datetime = Field(
         default_factory=datetime.utcnow, 

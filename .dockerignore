@@ -1,0 +1,56 @@
+# .dockerignore - Exclude unnecessary files from Docker image
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Testing & Scripts
+.pytest_cache/
+.coverage
+htmlcov/
+test_*.py
+manuel_ingest.py
+debug_*.py
+
+# Lambda packages (we're using Docker)
+lambda_packages/
+
+# Documentation
+*.md
+docs/
+
+# Deployment scripts
+deploy_*.ps1
+Dockerfile*
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# Alembic (Lambda doesn't run migrations)
+alembic/
+alembic.ini
+
+# Response files from Lambda testing
+response.json
+
+lambda_packages/
