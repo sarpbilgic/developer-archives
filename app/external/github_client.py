@@ -9,6 +9,11 @@ from typing import Dict, Any, Optional, List
 
 from app.settings import settings
 
+# Custom exception for rate limit failures
+class RateLimitError(Exception):
+    """Raised when GitHub API rate limit is critically low."""
+    pass
+
 class GitHubClient:
     """
     A robust, production-ready client for interacting with the GitHub API.
@@ -42,7 +47,7 @@ class GitHubClient:
         # - Sudden spikes that trigger 403 errors
         # - Multiple Lambda instances overwhelming the rate limit
         # - Connection pool exhaustion
-        self._api_semaphore = asyncio.Semaphore(3)  # Max 3 concurrent API calls per instance
+        self._api_semaphore = asyncio.Semaphore(2)  # Max 3 concurrent API calls per instance
 
     async def _make_request(self, method: str, url: str, **kwargs) -> httpx.Response:
         """
@@ -64,16 +69,10 @@ class GitHubClient:
             if remaining < 100:
                 print(f"INFO: GitHub API rate limit at {remaining} requests remaining")
             
-            # CRITICAL threshold: Only pause when truly necessary
+            # CRITICAL threshold: Fail fast instead of waiting
             if remaining < 5:
-                reset_timestamp = int(response.headers.get("X-RateLimit-Reset", 0))
-                reset_time = datetime.fromtimestamp(reset_timestamp, tz=timezone.utc)
-                now = datetime.now(timezone.utc)
-                sleep_duration = (reset_time - now).total_seconds()
-                
-                if sleep_duration > 0:
-                    print(f"CRITICAL: GitHub API rate limit critically low ({remaining} left). Pausing for {sleep_duration:.2f} seconds.")
-                    await asyncio.sleep(sleep_duration + 2) # Add 2s buffer
+                print(f"CRITICAL: GitHub API rate limit ({remaining} left). Failing fast.")
+                raise RateLimitError("GitHub API rate limit exceeded. Failing fast.")
             # --- -------------------------------- ---
             
             response.raise_for_status() # Raise an exception for 4xx/5xx errors

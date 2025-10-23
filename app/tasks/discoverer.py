@@ -19,6 +19,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from app.external.github_client import github_client
 from app.settings import settings
+from app.db import get_session
+from app.services.data_processing_service import DataProcessingService
 
 # --- CURATED DISCOVERY STRATEGY ---
 # AWS RDS Free Tier Analysis: 20GB can hold ~1M repos (detailed calc: STORAGE_CALCULATION.md)
@@ -289,6 +291,11 @@ async def process_single_page(language: str, config: Dict, query: str, page: int
     """
     Process a single page of search results.
     
+    NEW FLOW:
+    1. Filter high-quality repos from search results
+    2. Save each repo to database (status: "discovered")
+    3. Send only project_id to SQS for embedding generation
+    
     Returns:
         (processed_count, skipped_count, quality_scores, has_more_results)
     """
@@ -307,48 +314,73 @@ async def process_single_page(language: str, config: Dict, query: str, page: int
         print(f"  No results on page {page}")
         return 0, 0, [], False
 
-    # Process, filter, and queue results
+    # Process, filter, save to DB, and queue IDs
     messages_to_queue = []
     processed = 0
     skipped = 0
     scores = []
+    
+    # Create a database session for this batch
+    session_generator = get_session()
+    db_session = None
+    
+    try:
+        db_session = await anext(session_generator)
+        processing_service = DataProcessingService(session=db_session)
 
-    for repo in items:
-        repo_name = repo.get("full_name", "unknown")
-        quality_score = calculate_quality_score(repo)
-        scores.append(quality_score)
-        
-        if is_candidate_high_quality(repo, config):
-            full_name = repo.get("full_name")
-            if full_name:
-                messages_to_queue.append({
-                    'Id': full_name.replace('/', '-').replace('.', '_'),
-                    'MessageBody': json.dumps({
-                        "full_name": full_name,
-                        "quality_score": round(quality_score, 2),
-                        "stars": repo.get("stargazers_count", 0)
-                    })
-                })
-                processed += 1
-                
-                if quality_score >= 70:
-                    print(f"    ⭐ {full_name} (score: {quality_score:.1f})")
-                
-                if len(messages_to_queue) == 10:
+        for repo in items:
+            repo_name = repo.get("full_name", "unknown")
+            quality_score = calculate_quality_score(repo)
+            scores.append(quality_score)
+            
+            if is_candidate_high_quality(repo, config):
+                full_name = repo.get("full_name")
+                if full_name:
+                    # OPTIMIZED: Save minimal data from search results only (no extra API calls!)
                     try:
-                        sqs_client.send_message_batch(QueueUrl=SQS_QUEUE_URL, Entries=messages_to_queue)
-                        messages_to_queue = []
+                        saved_project = await processing_service.save_discovered_repo_minimal(repo)
+                        
+                        if saved_project:
+                            # Queue only the project ID (minimal message)
+                            messages_to_queue.append({
+                                'Id': str(saved_project.id),
+                                'MessageBody': json.dumps({
+                                    "project_id": saved_project.id
+                                })
+                            })
+                            processed += 1
+                            
+                            if quality_score >= 70:
+                                print(f"    ⭐ {full_name} (score: {quality_score:.1f}, ID: {saved_project.id})")
+                            
+                            # Send batch when we have 10 messages
+                            if len(messages_to_queue) == 10:
+                                try:
+                                    sqs_client.send_message_batch(QueueUrl=SQS_QUEUE_URL, Entries=messages_to_queue)
+                                    messages_to_queue = []
+                                except Exception as e:
+                                    print(f"    ERROR: SQS batch failed: {e}")
+                        else:
+                            print(f"    WARN: Failed to save {full_name} to database")
+                            skipped += 1
+                            
                     except Exception as e:
-                        print(f"    ERROR: SQS batch failed: {e}")
-        else:
-            skipped += 1
+                        print(f"    ERROR: Failed to process {full_name}: {e}")
+                        skipped += 1
+            else:
+                skipped += 1
 
-    # Send remaining messages
-    if messages_to_queue:
-        try:
-            sqs_client.send_message_batch(QueueUrl=SQS_QUEUE_URL, Entries=messages_to_queue)
-        except Exception as e:
-            print(f"    ERROR: Final SQS batch failed: {e}")
+        # Send remaining messages
+        if messages_to_queue:
+            try:
+                sqs_client.send_message_batch(QueueUrl=SQS_QUEUE_URL, Entries=messages_to_queue)
+            except Exception as e:
+                print(f"    ERROR: Final SQS batch failed: {e}")
+                
+    finally:
+        # Always close the database session
+        if db_session:
+            await db_session.close()
 
     has_more = len(items) == 100  # Full page = more results likely available
     return processed, skipped, scores, has_more

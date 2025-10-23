@@ -2,6 +2,8 @@
 # This layer is responsible for all write/update/delete operations to the database.
 # It is the only part of the application that directly writes SQL or uses the ORM for mutations.
 
+from typing import Optional, List
+from datetime import datetime, timezone
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import select
@@ -21,6 +23,55 @@ class ProjectRepository:
             session: An active AsyncSession for database communication.
         """
         self.session = session
+
+    async def get_by_id(self, project_id: int) -> Optional[Project]:
+        """
+        Retrieves a project by its ID.
+        
+        Args:
+            project_id: The primary key ID of the project.
+            
+        Returns:
+            The Project object if found, None otherwise.
+        """
+        statement = select(Project).where(Project.id == project_id)
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+    
+    async def update_embedding(
+        self, 
+        project_id: int, 
+        embedding: List[float], 
+        processing_status: str
+    ) -> Optional[Project]:
+        """
+        Updates only the embedding and processing status for a project.
+        Used by the processor after generating embeddings.
+        
+        Args:
+            project_id: The ID of the project to update.
+            embedding: The generated embedding vector.
+            processing_status: The new processing status (e.g., "completed", "failed").
+            
+        Returns:
+            The updated Project object, or None if not found.
+        """
+        statement = select(Project).where(Project.id == project_id)
+        result = await self.session.execute(statement)
+        project = result.scalar_one_or_none()
+        
+        if not project:
+            return None
+        
+        project.project_embedding = embedding
+        project.processing_status = processing_status
+        project.last_indexed_at = datetime.now(timezone.utc)
+        
+        self.session.add(project)
+        await self.session.commit()
+        await self.session.refresh(project)
+        
+        return project
 
     async def upsert(self, project: Project) -> Project:
         """

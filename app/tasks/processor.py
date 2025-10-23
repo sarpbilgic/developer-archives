@@ -17,25 +17,26 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 # Import necessary components
 from app.services.data_processing_service import DataProcessingService
 from app.db import get_session
+from app.external.github_client import RateLimitError
 # Note: github_client and embedding_client are used by DataProcessingService internally (singleton pattern)
 
 # --- Helper Function to Process a Single Message ---
 
 async def process_single_repo(message_body: Dict[str, Any], message_id: str) -> Dict[str, Any]:
     """
-    Takes a single message body from SQS and processes the corresponding repository.
+    NEW FLOW: Takes a project_id from SQS, loads from DB, and creates embeddings.
     Handles dependency creation and session management outside of FastAPI context.
     
     Returns:
         Dict with 'success' (bool), 'message_id' (str), and optional 'error' (str)
     """
-    full_name = message_body.get("full_name")
-    if not full_name or '/' not in full_name:
-        print(f"ERROR: Invalid message body received: {message_body}")
+    # NEW: Parse project_id instead of full_name
+    project_id = message_body.get("project_id")
+    if not project_id:
+        print(f"ERROR: Invalid message body received (missing project_id): {message_body}")
         return {"success": False, "message_id": message_id, "error": "Invalid message body"}
 
-    owner, repo = full_name.split('/', 1)
-    print(f"INFO: Starting processing for repository: {owner}/{repo}")
+    print(f"INFO: Starting embedding generation for project ID: {project_id}")
 
     # Manually manage the database session as we are outside FastAPI's request lifecycle
     session_generator = get_session()
@@ -48,16 +49,26 @@ async def process_single_repo(message_body: Dict[str, Any], message_id: str) -> 
         # gh_client and embed_client will use singletons by default
         processing_service = DataProcessingService(session=db_session)
 
-        # Execute the main processing logic
-        await processing_service.process_and_save_repo(owner=owner, repo=repo)
+        # NEW: Execute the embedding generation logic only
+        result = await processing_service.create_and_save_embeddings(project_id=project_id)
         
-        print(f"SUCCESS: Repository {owner}/{repo} processed successfully")
-        return {"success": True, "message_id": message_id}
+        if result:
+            print(f"SUCCESS: Project ID {project_id} ({result.full_name}) embeddings created successfully")
+            return {"success": True, "message_id": message_id}
+        else:
+            print(f"ERROR: Failed to create embeddings for project ID {project_id}")
+            return {"success": False, "message_id": message_id, "error": "Embedding creation failed"}
 
+    except RateLimitError as e:
+        # Rate limit hit - this is not a critical error, just need to retry later
+        print(f"INFO: Rate limit hit for project ID {project_id}. Returning to queue for retry. Error: {e}")
+        # Return failure so SQS will retry this message later
+        return {"success": False, "message_id": message_id, "error": "Rate limit hit"}
+    
     except Exception as e:
         # Log the error details for debugging
         import traceback
-        print(f"CRITICAL ERROR processing {owner}/{repo}: {e}")
+        print(f"CRITICAL ERROR processing project ID {project_id}: {e}")
         print(traceback.format_exc()) # Print full stack trace
         
         # Return failure info instead of raising
@@ -67,7 +78,7 @@ async def process_single_repo(message_body: Dict[str, Any], message_id: str) -> 
         # ALWAYS ensure the database session is closed, even if errors occur.
         if db_session:
             await db_session.close()
-            print(f"INFO: Database session closed for {owner}/{repo}")
+            print(f"INFO: Database session closed for project ID {project_id}")
 
 # --- Helper Function to Process All Messages in Parallel ---
 
@@ -130,7 +141,7 @@ def handler(event, context):
             # Malformed messages - add to failures list
             message_id = record.get("messageId")
             if message_id:
-                messages_with_ids.append(({"full_name": "INVALID"}, message_id))
+                messages_with_ids.append(({"project_id": None}, message_id))
 
     # Process ALL messages in parallel (asyncio.gather)
     batch_item_failures = []

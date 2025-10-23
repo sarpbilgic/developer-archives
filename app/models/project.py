@@ -3,10 +3,17 @@
 from typing import List, Optional, Dict
 from sqlmodel import Field, SQLModel, Column, ARRAY, Text, DateTime
 from pgvector.sqlalchemy import Vector
-from datetime import datetime
-
+from datetime import datetime, timezone
+from enum import Enum
 
 from sqlalchemy.dialects.postgresql import JSONB
+
+class ProcessingStatus(str, Enum):
+    """Status of repository processing pipeline."""
+    DISCOVERED = "discovered"  # Found by discoverer, saved to DB, not yet embedded
+    EMBEDDING_IN_PROGRESS = "embedding_in_progress"  # Currently being processed
+    COMPLETED = "completed"  # Fully processed with embeddings
+    FAILED = "failed"  # Processing failed, needs retry
 
 class Project(SQLModel, table=True):
     """
@@ -50,6 +57,14 @@ class Project(SQLModel, table=True):
     # Primary embedding (single vector combining all search-relevant info)
     project_embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
     last_indexed_at: datetime = Field(
-        default_factory=datetime.utcnow, 
+        default_factory=lambda: datetime.now(timezone.utc), 
         sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    
+    # Processing pipeline status tracking
+    processing_status: str = Field(
+        default=ProcessingStatus.DISCOVERED.value,
+        max_length=50,
+        index=True,
+        nullable=False
     )

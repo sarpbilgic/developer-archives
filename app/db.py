@@ -10,7 +10,7 @@ engine = create_async_engine(
     settings.database_url, 
     echo=False, 
     future=True,
-    pool_size=5,          # Max 5 base connections (conservative for multi-instance)
+    pool_size=4,          # Max 5 base connections (conservative for multi-instance)
     max_overflow=1,       # Allow 3 extra under load (total: 8 per Lambda)
     pool_pre_ping=True,   # Verify connections before use (important for Lambda)
     pool_recycle=3600,    # Recycle connections after 1 hour
