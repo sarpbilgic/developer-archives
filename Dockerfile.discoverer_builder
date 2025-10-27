@@ -1,0 +1,25 @@
+ARG PYTHON_VERSION=3.11
+ARG TARGET_ARCHITECTURE=x86_64 
+
+FROM python:${PYTHON_VERSION}-slim AS builder
+
+RUN if [ "${TARGET_ARCHITECTURE}" = "arm64" ]; then \
+        echo "Building for linux/arm64"; \
+        export PIP_PLATFORM="manylinux2014_aarch64"; \
+    else \
+        echo "Building for linux/amd64"; \
+        export PIP_PLATFORM="manylinux2014_x86_64"; \
+    fi && \
+    pip install \
+        --platform ${PIP_PLATFORM} \
+        --implementation cp \
+        --target="/lambda_packages" \
+        --python-version ${PYTHON_VERSION} \
+        --upgrade \
+        --no-cache-dir \
+        sqlmodel asyncpg sqlalchemy pgvector psycopg2-binary \
+        greenlet pydantic python-dotenv \
+        beautifulsoup4 httpx
+
+FROM scratch
+COPY --from=builder /lambda_packages /lambda_packages

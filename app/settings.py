@@ -1,8 +1,10 @@
 import os
 import boto3
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 class Settings:
     def __init__(self):
@@ -18,7 +20,7 @@ class Settings:
         self.s3_readme_bucket = os.getenv("S3_README_BUCKET")  
     
         if self.db_host is None:
-            print("Local .env file not found. Loading settings from AWS Parameter Store...")
+            logger.info("Local .env file not found, loading settings from AWS Parameter Store")
             self._load_from_ssm()
 
     def _load_from_ssm(self):
@@ -32,7 +34,7 @@ class Settings:
                 )
                 return response['Parameter']['Value']
             except ssm_client.exceptions.ParameterNotFound:
-                print(f"UYARI: SSM parametresi bulunamadı: {name}")
+                logger.warning(f"SSM parameter not found: {name}")
                 return None
 
         self.db_host = get_parameter('/dev/developer-archives/DB_ENDPOINT')
