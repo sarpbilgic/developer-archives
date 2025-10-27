@@ -12,3 +12,4 @@ pydantic
 sqlmodel
 httpx
 beautifulsoup4
+uvloop

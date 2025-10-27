@@ -1,65 +1,94 @@
-FROM public.ecr.aws/lambda/python:3.11-arm64
+FROM python:3.11-slim-bookworm AS builder
+
+ARG TARGETARCH=arm64
 WORKDIR /var/task
 
-ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    TOKENIZERS_PARALLELISM=false OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TOKENIZERS_PARALLELISM=false \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1
+
+# PyTorch CPU index 
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
+# Bağımlılıkları /install_dir içine kur
+RUN python -m pip install --upgrade pip && \
+    pip install \
+        --platform manylinux2014_aarch64 \
+        --target="/install_dir" \
+        --only-binary=:all: \
+        --no-cache-dir \
+        torch \
+        --index-url ${TORCH_INDEX_URL}
 
 COPY requirements-processor.txt .
-RUN python -m pip install --upgrade pip && \
-    pip install --only-binary=:all: --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --only-binary=:all: --no-cache-dir -r requirements-processor.txt && \
-    pip install --no-cache-dir sentence-transformers
-
-# (Önerilen) modeli build aşamasında göm:
-RUN python - << 'PY'
+RUN pip install \
+        --platform manylinux2014_aarch64 \
+        --target="/install_dir" \
+        --only-binary=:all: \
+        --no-cache-dir \
+        -r requirements-processor.txt
+    # Modeli de bu aşamada indir ve /install_dir içine kaydet
+    # PYTHONPATH'e /install_dir ekleyerek modülleri görünür yap
+RUN PYTHONPATH=/install_dir:$PYTHONPATH python - << 'PY'
 from sentence_transformers import SentenceTransformer
 from huggingface_hub import snapshot_download
 import os
-import time
 
 model_name = "sentence-transformers/all-mpnet-base-v2"
 print(f"Downloading model: {model_name}")
 
-# Retry logic for robust downloading
-max_retries = 3
-for attempt in range(max_retries):
-    try:
-        print(f"Download attempt {attempt + 1}/{max_retries}...")
-        
-        # First, download all model files with force_download
-        snapshot_download(
-            repo_id=model_name,
-            cache_dir="/tmp/model_cache",
-            force_download=True,
-            resume_download=False
-        )
-        
-        # Then load and save the model
-        m = SentenceTransformer(
-            model_name,
-            cache_folder="/tmp/model_cache",
-            device="cpu"
-        )
-        m.save("/opt/model")
-        print("Model successfully saved to /opt/model")
-        break
-        
-    except Exception as e:
-        print(f"Attempt {attempt + 1} failed: {e}")
-        if attempt < max_retries - 1:
-            wait_time = (attempt + 1) * 10
-            print(f"Waiting {wait_time}s before retry...")
-            time.sleep(wait_time)
-        else:
-            print("All download attempts failed!")
-            raise
+# Model dosyalarını indir
+snapshot_download(
+    repo_id=model_name,
+    cache_dir="/tmp/model_cache"
+)
+
+# Modeli yükle ve Lambda için optimize formatta kaydet
+m = SentenceTransformer(
+    model_name,
+    cache_folder="/tmp/model_cache",
+    device="cpu"
+)
+# Modeli, paketlerin geri kalanıyla birlikte kaydet
+import os
+m.save("/install_dir/model")
+print("Model successfully saved to /install_dir/model")
+
+# VERIFY: Model dosyalarını listele
+try:
+    model_files = os.listdir("/install_dir/model")
+    print(f"Model directory contents ({len(model_files)} files):")
+    for f in model_files[:10]:  # İlk 10 dosya
+        file_path = f"/install_dir/model/{f}"
+        size = os.path.getsize(file_path) if os.path.isfile(file_path) else "DIR"
+        print(f"  {f} ({size} bytes)")
+    
+    total_size = sum(os.path.getsize(f"/install_dir/model/{f}") 
+                    for f in model_files if os.path.isfile(f"/install_dir/model/{f}"))
+    print(f"Total model size: {total_size / (1024*1024):.1f} MB")
+    
+except Exception as e:
+    print(f"ERROR: Could not verify model directory: {e}")
+    raise e
 PY
 
-COPY app/ /var/task/app/
 
-# Set environment variables for offline model usage
+# --- AŞAMA 2: FINAL ---
+# Temiz AWS Lambda temel imajını kullan
+FROM public.ecr.aws/lambda/python:3.11-arm64
+
+WORKDIR /var/task
+
+# MODEL_PATH'i /opt/model yerine /var/task/model olarak güncelle
+# (embedding_client.py dosyanız bu ortam değişkenini okuyacaktır)
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
-    MODEL_PATH=/opt/model
+    MODEL_PATH=/var/task/model
+
+COPY --from=builder /install_dir/ /var/task/
+
+COPY app/ /var/task/app/
 
 CMD ["app.tasks.processor.handler"]

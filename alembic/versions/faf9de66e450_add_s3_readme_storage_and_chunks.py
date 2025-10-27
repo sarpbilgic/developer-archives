@@ -38,8 +38,7 @@ def upgrade() -> None:
     op.create_index('ix_projects_readme_s3_key', 'projects', ['readme_s3_key'])
     
     # NOTE: readme_content column is kept for backward compatibility
-    # You can drop it manually later after verifying all READMEs are in S3:
-    # ALTER TABLE projects DROP COLUMN readme_content;
+
 
 
 def downgrade() -> None:

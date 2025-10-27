@@ -24,18 +24,8 @@ def upgrade() -> None:
     """
     Create IVFFlat index for vector similarity search.
     
-    IVFFlat is memory-efficient (critical for 1GB RAM!) compared to HNSW:
-    - HNSW: Fast but high memory (9KB per vector)
-    - IVFFlat: Moderate speed, low memory (1-2KB per vector)
-    
-    For 75k repos:
-    - HNSW: ~675 MB RAM (TOO MUCH for 1GB!)
-    - IVFFlat: ~150 MB RAM (PERFECT!)
-    """
     # Create IVFFlat index with 'lists' parameter
     # lists = sqrt(row_count) is a good heuristic
-    # For 75k repos: sqrt(75000) ≈ 274
-    # We use 100-300 lists for optimal performance
     
     op.execute("""
         CREATE INDEX IF NOT EXISTS idx_project_embedding_ivfflat 
@@ -43,17 +33,9 @@ def upgrade() -> None:
         USING ivfflat (project_embedding vector_cosine_ops) 
         WITH (lists = 200);
     """)
-    
-    # Note: After inserting data, you should run:
-    # ANALYZE projects;
-    # This helps PostgreSQL optimize the index usage
 
 
 def downgrade() -> None:
     """Remove IVFFlat index."""
     op.execute("DROP INDEX IF EXISTS idx_project_embedding_ivfflat;")
 
-# USAGE INSTRUCTIONS:
-# 1. Run this migration: alembic upgrade head
-# 2. After loading repos: psql -c "ANALYZE projects;"
-# 3. In search queries, use: ORDER BY project_embedding <=> query_vector
