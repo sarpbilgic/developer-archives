@@ -88,6 +88,41 @@ class ReadmeExtractor:
         
         truncated_words = words[:max_words]
         return " ".join(truncated_words)
+    
+    def clean_readme_content(self, content: str) -> str:
+        """Clean README content by converting literal \\n to actual newlines and removing excess whitespace."""
+        if not content:
+            return ""
+        
+        import re
+        
+        # Replace literal \n with actual newlines
+        cleaned = content.replace('\\n', '\n')
+        
+        # Handle JSON-style double escaping if present
+        if '\\\\n' in cleaned:
+            cleaned = cleaned.replace('\\\\n', '\n')
+        
+        # Also handle other common escape sequences if present
+        cleaned = cleaned.replace('\\t', '\t')  # tabs
+        cleaned = cleaned.replace('\\r', '\r')  # carriage returns
+        
+        # Clean up excessive whitespace while preserving intentional formatting
+        lines = cleaned.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            # Strip trailing spaces but preserve leading spaces for indentation
+            cleaned_line = line.rstrip()
+            cleaned_lines.append(cleaned_line)
+        
+        # Join lines and reduce excessive empty lines (more than 2 consecutive)
+        result = '\n'.join(cleaned_lines)
+        
+        # Replace 3+ consecutive newlines with just 2
+        result = re.sub(r'\n{3,}', '\n\n', result)
+        
+        return result.strip()
 
 readme_extractor = ReadmeExtractor()
 
