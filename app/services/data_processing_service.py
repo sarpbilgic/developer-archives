@@ -8,17 +8,13 @@ import traceback
 
 logger = logging.getLogger(__name__)
 
-# Import all the necessary components from our layered architecture
-from app.db import get_session  # FIXED: Correct module name
-from app.external.github_client import GitHubClient, github_client as default_github_client # Default instance
-# LAZY IMPORT: Only import embedding_client when actually needed (saves 766MB torch dependency for discoverer)
-# from app.external.embedding_client import EmbeddingClient, embedding_client as default_embedding_client
-from app.external.s3_client import S3Client, s3_client as default_s3_client  # S3 for README storage
+from app.db import get_session
+from app.external.github_client import GitHubClient, github_client as default_github_client 
+from app.external.s3_client import S3Client, s3_client as default_s3_client 
 from app.data_access.repositories.project_repository import ProjectRepository
 from app.models.project import Project, ProcessingStatus
 from app.services.readme_extractor import ReadmeExtractor, readme_extractor as default_readme_extractor
 
-# Optional FastAPI import (only used when running as API server, not Lambda)
 try:
     from fastapi import Depends
     FASTAPI_AVAILABLE = True
@@ -27,18 +23,12 @@ except ImportError:
     Depends = None
 
 class DataProcessingService:
-    """
-    Orchestrates the entire process of fetching, cleaning, processing,
-    and preparing repository data for storage. This is the "Analyst" layer.
 
-    Works in both FastAPI (with Depends via get_data_processing_service)
-    and Lambda/script (manual injection) contexts.
-    """
     def __init__(
         self,
         session: AsyncSession, 
         gh_client: Optional[GitHubClient] = None,
-        embed_client = None, # Optional: lazy-loaded to avoid torch dependency in discoverer
+        embed_client = None, #lazy-loaded to avoid torch dependency in discoverer
         s3_client: Optional[S3Client] = None, 
         extractor: Optional[ReadmeExtractor] = None 
     ):
@@ -59,17 +49,11 @@ class DataProcessingService:
         """
         if self._embedding_client is None:
             # Import only when needed (lazy loading)
-            from app.external.embedding_client import embedding_client as default_embedding_client
-            self._embedding_client = default_embedding_client
+            from app.external.embedding_client import get_embedding_client
+            self._embedding_client = get_embedding_client()
         return self._embedding_client
 
     async def save_discovered_repo_from_search_results(self, repo_data: Dict[str, Any]) -> Optional[Project]:
-        """
-        This is the IDEAL approach:
-        1. Uses search results for basic metadata (no extra API call)
-        2. Fetches ONLY languages and README from GitHub API (2 calls total)
-        3. Saves everything ready for embedding generation
-        """
         full_name = repo_data.get("full_name")
         if not full_name:
             logger.warning(f"No full_name in repo_data")
@@ -98,10 +82,6 @@ class DataProcessingService:
             owner_info = repo_data.get("owner", {})
             owner, repo_name = full_name.split('/', 1)
             
-            # === FETCH MISSING DATA FROM GITHUB API ===
-            # This is where Discoverer does the heavy API work!
-            
-            # 1. Fetch languages (API Call #1)
             languages_breakdown = {}
             try:
                 logger.info(f"Fetching languages for {full_name}")
@@ -111,7 +91,6 @@ class DataProcessingService:
             except Exception as e:
                 logger.warning(f"Could not fetch languages: {e}")
             
-            # 2. Fetch and process README (API Call #2)
             readme_s3_key = None
             readme_word_count = 0
             try:
@@ -134,7 +113,6 @@ class DataProcessingService:
             except Exception as e:
                 logger.warning(f" Could not fetch/process README: {e}")
             
-            # === BUILD PROJECT MODEL WITH COMPLETE DATA ===
             project_model = Project(
                 full_name=full_name,
                 description=repo_data.get("description"),
@@ -143,7 +121,7 @@ class DataProcessingService:
                 owner_url=owner_info.get("html_url"),
                 owner_type=owner_info.get("type", "User"),
                 primary_language=repo_data.get("language"),
-                languages_breakdown=languages_breakdown,  # FETCHED FROM API
+                languages_breakdown=languages_breakdown,  
                 is_archived=repo_data.get("archived", False),
                 topics=repo_data.get("topics", []),
                 stars=repo_data.get("stargazers_count", 0),
@@ -154,13 +132,12 @@ class DataProcessingService:
                 pushed_at_github=datetime.fromisoformat(repo_data["pushed_at"].replace("Z", "+00:00")) if repo_data.get("pushed_at") else datetime.now(timezone.utc),
                 github_url=repo_data.get("html_url", ""),
                 homepage_url=repo_data.get("homepage"),
-                readme_s3_key=readme_s3_key,  # FETCHED AND UPLOADED
-                readme_word_count=readme_word_count,  # CALCULATED
-                project_embedding=None,  # Will be created by Processor
-                processing_status=ProcessingStatus.DISCOVERED.value  # Ready for embedding
+                readme_s3_key=readme_s3_key, 
+                readme_word_count=readme_word_count, 
+                project_embedding=None, 
+                processing_status=ProcessingStatus.DISCOVERED.value  
             )
             
-            # Save to database
             saved_project = await self.project_repo.upsert(project=project_model)
             logger.info(f" Saved COMPLETE data for {saved_project.full_name} (ID: {saved_project.id})")
             return saved_project
@@ -674,16 +651,16 @@ class DataProcessingService:
 
         # Create the Project model instance
         project = Project(
-            full_name=details["full_name"], # Assume full_name always exists if details exist
+            full_name=details["full_name"], 
             description=details.get("description"),
             owner_login=owner_info.get("login"),
             owner_avatar_url=owner_info.get("avatar_url"),
             owner_url=owner_info.get("html_url"),
             owner_type=owner_info.get("type"),
             primary_language=details.get("language"),
-            languages_breakdown=languages if languages else {}, # Ensure it's a dict
+            languages_breakdown=languages if languages else {}, 
             is_archived=details.get("archived", False),
-            topics=details.get("topics") if details.get("topics") else [], # Ensure it's a list
+            topics=details.get("topics") if details.get("topics") else [], 
             stars=details.get("stargazers_count", 0),
             forks=details.get("forks_count", 0),
             watchers=details.get("watchers_count", 0),
@@ -692,11 +669,9 @@ class DataProcessingService:
             pushed_at_github=parse_datetime_str(details.get("pushed_at")),
             github_url=details.get("html_url"),
             homepage_url=details.get("homepage"),
-            # NEW: S3-based README storage
             readme_s3_key=readme_s3_key,
             readme_word_count=readme_word_count,
-            project_embedding=embedding # Assign the embedding vector (can be None)
-            # last_indexed_at is handled by default_factory in the model
+            project_embedding=embedding 
         )
         return project
 
