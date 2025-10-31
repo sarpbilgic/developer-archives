@@ -1,0 +1,101 @@
+# Dockerfile.api
+# Bu Dockerfile, KULLANICIYA YÖNELİK FastAPI sunucusu içindir.
+
+# --- AŞAMA 1: BUILDER ---
+# Processor'deki builder aşamasıyla aynı, sadece requirements farklı
+FROM python:3.11-slim-bookworm AS builder
+
+ARG TARGETARCH=arm64
+WORKDIR /var/task
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TOKENIZERS_PARALLELISM=false \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1
+
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
+# Önce PyTorch'u ayrı indir (processor'deki gibi)
+RUN python -m pip install --upgrade pip && \
+    pip install \
+        --platform manylinux2014_aarch64 \
+        --target="/install_dir" \
+        --only-binary=:all: \
+        --no-cache-dir \
+        torch \
+        --index-url ${TORCH_INDEX_URL}
+
+# Sonra API requirements dosyasını kur
+COPY requirements-api.txt .
+RUN pip install \
+        --platform manylinux2014_aarch64 \
+        --target="/install_dir" \
+        --only-binary=:all: \
+        --no-cache-dir \
+        -r requirements-api.txt
+
+# Model'i build sırasında indir ve kaydet (processor'deki gibi)
+RUN PYTHONPATH=/install_dir:$PYTHONPATH python - << 'PY'
+from sentence_transformers import SentenceTransformer
+from huggingface_hub import snapshot_download
+import os
+
+model_name = "sentence-transformers/all-mpnet-base-v2"
+print(f"Downloading model: {model_name}")
+
+# Model dosyalarını indir
+snapshot_download(
+    repo_id=model_name,
+    cache_dir="/tmp/model_cache"
+)
+
+# Modeli yükle ve Lambda için optimize formatta kaydet
+m = SentenceTransformer(
+    model_name,
+    cache_folder="/tmp/model_cache",
+    device="cpu"
+)
+# Modeli, paketlerin geri kalanıyla birlikte kaydet
+m.save("/install_dir/model")
+print("Model successfully saved to /install_dir/model")
+
+# VERIFY: Model dosyalarını listele
+try:
+    model_files = os.listdir("/install_dir/model")
+    print(f"Model directory contents ({len(model_files)} files):")
+    for f in model_files[:10]:  # İlk 10 dosya
+        file_path = f"/install_dir/model/{f}"
+        size = os.path.getsize(file_path) if os.path.isfile(file_path) else "DIR"
+        print(f"  {f} ({size} bytes)")
+    
+    total_size = sum(os.path.getsize(f"/install_dir/model/{f}") 
+                    for f in model_files if os.path.isfile(f"/install_dir/model/{f}"))
+    print(f"Total model size: {total_size / (1024*1024):.1f} MB")
+    
+except Exception as e:
+    print(f"ERROR: Could not verify model directory: {e}")
+    raise e
+PY
+
+
+# --- AŞAMA 2: FINAL ---
+# API sunucusu için temiz Lambda imajı
+FROM public.ecr.aws/lambda/python:3.11-arm64
+
+WORKDIR /var/task
+
+# Model offline olarak kullanılacak (processor'deki gibi)
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    MODEL_PATH=/var/task/model
+
+# Builder'dan paketleri ve model'i kopyala
+COPY --from=builder /install_dir/ /var/task/
+
+# API kodunu (app klasörünü) kopyala
+COPY app/ /var/task/app/
+
+# KRİTİK FARK:
+# processor.handler yerine, app/main.py içindeki Mangum handler'ını çağır
+CMD ["app.main.handler"]

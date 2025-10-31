@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from mangum import Mangum
 from app.api.routes.search import router as search_router
 from app.api.routes.repository import router as repository_router
 
@@ -11,6 +12,7 @@ app = FastAPI(
 app.include_router(search_router, prefix="/api/v1", tags=["search"])
 app.include_router(repository_router, prefix="/api/v1", tags=["repository"])
 
+handler = Mangum(app)
 
 @app.get("/")
 async def root():

@@ -1,6 +1,6 @@
 from fastapi import Query, HTTPException, Depends, APIRouter
 from typing import List, Optional
-from app.external.embedding_client import embedding_client 
+from app.external.embedding_client import get_embedding_client, EmbeddingClient
 from app.db import get_session 
 from sqlmodel.ext.asyncio.session import AsyncSession 
 from app.schemas.search import SearchResultItem
@@ -20,10 +20,11 @@ async def search(
     page: int = Query(1, ge=1, le=1000, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
     session: AsyncSession = Depends(get_session),
+    embed_client: EmbeddingClient = Depends(get_embedding_client)
 ):
     try:
         logging.info(f"Generating embedding for query: {query}")
-        query_embedding = embedding_client.get_embedding(query)
+        query_embedding = embed_client.get_embedding(query)
     except (httpx.RequestError, ConnectionError) as e:
         logging.error(f"Failed to connect to embedding client: {e}")
         raise HTTPException(

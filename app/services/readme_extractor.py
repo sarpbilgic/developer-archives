@@ -90,37 +90,52 @@ class ReadmeExtractor:
         return " ".join(truncated_words)
     
     def clean_readme_content(self, content: str) -> str:
-        """Clean README content by converting literal \\n to actual newlines and removing excess whitespace."""
+        """Clean README content by removing HTML tags and converting to clean text."""
         if not content:
             return ""
         
         import re
+        from bs4 import BeautifulSoup
         
-        # Replace literal \n with actual newlines
         cleaned = content.replace('\\n', '\n')
         
-        # Handle JSON-style double escaping if present
         if '\\\\n' in cleaned:
             cleaned = cleaned.replace('\\\\n', '\n')
         
-        # Also handle other common escape sequences if present
-        cleaned = cleaned.replace('\\t', '\t')  # tabs
-        cleaned = cleaned.replace('\\r', '\r')  # carriage returns
+        if '<' in cleaned and '>' in cleaned:
+
+            soup = BeautifulSoup(cleaned, 'html.parser')
+
+            for script in soup(["script", "style"]):
+                script.decompose()
+            
+            text = soup.get_text(separator='\n', strip=True)
+            
+            lines = text.split('\n')
+            cleaned_lines = []
+            
+            for line in lines:
+                line = line.strip()
+                if line:
+                    cleaned_lines.append(line)
+            
+            result = '\n'.join(cleaned_lines)
+            
+        else:
+            lines = cleaned.split('\n')
+            cleaned_lines = []
+            
+            for line in lines:
+                cleaned_line = line.rstrip()
+                cleaned_lines.append(cleaned_line)
+            
+            result = '\n'.join(cleaned_lines)
         
-        # Clean up excessive whitespace while preserving intentional formatting
-        lines = cleaned.split('\n')
-        cleaned_lines = []
-        
-        for line in lines:
-            # Strip trailing spaces but preserve leading spaces for indentation
-            cleaned_line = line.rstrip()
-            cleaned_lines.append(cleaned_line)
-        
-        # Join lines and reduce excessive empty lines (more than 2 consecutive)
-        result = '\n'.join(cleaned_lines)
-        
-        # Replace 3+ consecutive newlines with just 2
+
         result = re.sub(r'\n{3,}', '\n\n', result)
+  
+        result = result.replace('\\t', '\t')  
+        result = result.replace('\\r', '\r')  
         
         return result.strip()
 
