@@ -12,7 +12,7 @@ ENV PIP_NO_CACHE_DIR=1 \
 # PyTorch CPU index 
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
-# Bağımlılıkları /install_dir içine kur
+
 RUN python -m pip install --upgrade pip && \
     pip install \
         --platform manylinux2014_aarch64 \
@@ -29,8 +29,7 @@ RUN pip install \
         --only-binary=:all: \
         --no-cache-dir \
         -r requirements-processor.txt
-    # Modeli de bu aşamada indir ve /install_dir içine kaydet
-    # PYTHONPATH'e /install_dir ekleyerek modülleri görünür yap
+
 RUN PYTHONPATH=/install_dir:$PYTHONPATH python - << 'PY'
 from sentence_transformers import SentenceTransformer
 from huggingface_hub import snapshot_download
@@ -39,24 +38,22 @@ import os
 model_name = "sentence-transformers/all-mpnet-base-v2"
 print(f"Downloading model: {model_name}")
 
-# Model dosyalarını indir
 snapshot_download(
     repo_id=model_name,
     cache_dir="/tmp/model_cache"
 )
 
-# Modeli yükle ve Lambda için optimize formatta kaydet
 m = SentenceTransformer(
     model_name,
     cache_folder="/tmp/model_cache",
     device="cpu"
 )
-# Modeli, paketlerin geri kalanıyla birlikte kaydet
+
 import os
 m.save("/install_dir/model")
 print("Model successfully saved to /install_dir/model")
 
-# VERIFY: Model dosyalarını listele
+
 try:
     model_files = os.listdir("/install_dir/model")
     print(f"Model directory contents ({len(model_files)} files):")
@@ -75,14 +72,11 @@ except Exception as e:
 PY
 
 
-# --- AŞAMA 2: FINAL ---
-# Temiz AWS Lambda temel imajını kullan
 FROM public.ecr.aws/lambda/python:3.11-arm64
 
 WORKDIR /var/task
 
-# MODEL_PATH'i /opt/model yerine /var/task/model olarak güncelle
-# (embedding_client.py dosyanız bu ortam değişkenini okuyacaktır)
+
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     MODEL_PATH=/var/task/model

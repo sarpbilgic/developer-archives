@@ -1,8 +1,3 @@
-# Dockerfile.api
-# Bu Dockerfile, KULLANICIYA YÖNELİK FastAPI sunucusu içindir.
-
-# --- AŞAMA 1: BUILDER ---
-# Processor'deki builder aşamasıyla aynı, sadece requirements farklı
 FROM python:3.11-slim-bookworm AS builder
 
 ARG TARGETARCH=arm64
@@ -16,7 +11,6 @@ ENV PIP_NO_CACHE_DIR=1 \
 
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
-# Önce PyTorch'u ayrı indir (processor'deki gibi)
 RUN python -m pip install --upgrade pip && \
     pip install \
         --platform manylinux2014_aarch64 \
@@ -26,7 +20,6 @@ RUN python -m pip install --upgrade pip && \
         torch \
         --index-url ${TORCH_INDEX_URL}
 
-# Sonra API requirements dosyasını kur
 COPY requirements-api.txt .
 RUN pip install \
         --platform manylinux2014_aarch64 \
@@ -35,7 +28,6 @@ RUN pip install \
         --no-cache-dir \
         -r requirements-api.txt
 
-# Model'i build sırasında indir ve kaydet (processor'deki gibi)
 RUN PYTHONPATH=/install_dir:$PYTHONPATH python - << 'PY'
 from sentence_transformers import SentenceTransformer
 from huggingface_hub import snapshot_download
@@ -44,23 +36,22 @@ import os
 model_name = "sentence-transformers/all-mpnet-base-v2"
 print(f"Downloading model: {model_name}")
 
-# Model dosyalarını indir
+
 snapshot_download(
     repo_id=model_name,
     cache_dir="/tmp/model_cache"
 )
 
-# Modeli yükle ve Lambda için optimize formatta kaydet
 m = SentenceTransformer(
     model_name,
     cache_folder="/tmp/model_cache",
     device="cpu"
 )
-# Modeli, paketlerin geri kalanıyla birlikte kaydet
+
 m.save("/install_dir/model")
 print("Model successfully saved to /install_dir/model")
 
-# VERIFY: Model dosyalarını listele
+
 try:
     model_files = os.listdir("/install_dir/model")
     print(f"Model directory contents ({len(model_files)} files):")
@@ -79,23 +70,16 @@ except Exception as e:
 PY
 
 
-# --- AŞAMA 2: FINAL ---
-# API sunucusu için temiz Lambda imajı
 FROM public.ecr.aws/lambda/python:3.11-arm64
 
 WORKDIR /var/task
 
-# Model offline olarak kullanılacak (processor'deki gibi)
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     MODEL_PATH=/var/task/model
 
-# Builder'dan paketleri ve model'i kopyala
 COPY --from=builder /install_dir/ /var/task/
 
-# API kodunu (app klasörünü) kopyala
 COPY app/ /var/task/app/
 
-# KRİTİK FARK:
-# processor.handler yerine, app/main.py içindeki Mangum handler'ını çağır
 CMD ["app.main.handler"]
