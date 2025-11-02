@@ -4,23 +4,6 @@
 
 Developer Archives is a sophisticated backend system that enables semantic search across GitHub repositories using AI embeddings and vector similarity. The system automatically discovers, processes, and indexes repositories, making them searchable through natural language queries.
 
-## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Features](#features)
-- [Project Structure](#project-structure)
-- [Setup & Installation](#setup--installation)
-- [Environment Variables](#environment-variables)
-- [Database Schema](#database-schema)
-- [API Endpoints](#api-endpoints)
-- [AWS Deployment](#aws-deployment)
-- [Development](#development)
-- [Scripts](#scripts)
-
----
-
 ## 🎯 Overview
 
 Developer Archives consists of three main components:
@@ -340,23 +323,6 @@ Repository README content in markdown format...
    - Generates embeddings
    - Stores in PostgreSQL and S3
 
-### Deployment Steps
-
-1. **Deploy API**
-```powershell
-cd lambda_deployers
-.\deploy_api.ps1
-```
-
-2. **Deploy Discoverer**
-```powershell
-.\deploy_discoverer_simple.ps1
-```
-
-3. **Deploy Processor**
-```powershell
-.\deploy_processor_docker.ps1
-```
 
 ### AWS Resources Required
 
