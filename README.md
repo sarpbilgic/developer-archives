@@ -163,85 +163,12 @@ GitHub API → Discoverer → SQS Queue → Processor → PostgreSQL (pgvector) 
 
 ---
 
-## 📁 Project Structure
-
-```
-developer-archives/
-├── app/
-│   ├── __init__.py
-│   ├── main.py                    # FastAPI application entry point
-│   ├── settings.py                # Configuration management
-│   ├── db.py                      # Database connection
-│   │
-│   ├── api/                       # API layer
-│   │   └── routes/
-│   │       ├── search.py          # Search endpoints
-│   │       └── repository.py      # Repository endpoints
-│   │
-│   ├── data_access/               # Data access layer
-│   │   └── repositories/
-│   │       ├── project_repository.py      # CRUD operations
-│   │       ├── repository_detail.py       # Detail queries
-│   │       └── search_repository.py       # Search queries
-│   │
-│   ├── external/                  # External service clients
-│   │   ├── github_client.py       # GitHub API client
-│   │   ├── embedding_client.py    # Embedding generation
-│   │   └── s3_client.py           # S3 operations
-│   │
-│   ├── models/                    # SQLAlchemy models
-│   │   └── project.py             # Project model
-│   │
-│   ├── schemas/                   # Pydantic schemas
-│   │   ├── repository.py          # Repository schemas
-│   │   └── search.py              # Search schemas
-│   │
-│   ├── services/                  # Business logic
-│   │   ├── data_processing_service.py  # Processing logic
-│   │   └── readme_extractor.py         # README extraction
-│   │
-│   └── tasks/                     # Lambda functions
-│       ├── discoverer.py          # Repository discovery
-│       └── processor.py           # Repository processing
-│
-├── alembic/                       # Database migrations
-│   ├── versions/
-│   │   ├── 3c3824bea299_create_initial_project_table.py
-│   │   ├── 95babcc757cb_add_processing_status_to_projects.py
-│   │   ├── e0bc7beba9b8_add_gin_index_for_topics.py
-│   │   ├── e1020321b4e3_add_ivfflat_index_for_embeddings.py
-│   │   └── faf9de66e450_add_s3_readme_storage_and_chunks.py
-│   └── env.py
-│
-├── scripts/                       # Utility scripts
-│   ├── check_db_stats.py
-│   ├── check_processing_status.py
-│   ├── fix_completed_status.py
-│   ├── fix_failed_embeddings.py
-│   └── manuel_ingest.py
-│
-├── lambda_deployers/              # Deployment scripts
-│   ├── deploy_api.ps1
-│   ├── deploy_discoverer_simple.ps1
-│   └── deploy_processor_docker.ps1
-│
-├── Dockerfile.api                 # API Docker image
-├── Dockerfile.processor           # Processor Docker image
-├── Dockerfile.discoverer_builder  # Discoverer Docker image
-├── requirements.txt               # Python dependencies
-├── requirements-api.txt           # API-specific dependencies
-├── requirements-processor.txt     # Processor-specific dependencies
-└── alembic.ini                   # Alembic configuration
-```
-
----
-
 ## 🚀 Setup & Installation
 
 ### Prerequisites
 
-- Python 3.12+
-- PostgreSQL 14+ with pgvector extension
+- Python 3.11+
+- PostgreSQL 16+ with pgvector extension
 - AWS Account (for deployment)
 - GitHub Personal Access Token
 
