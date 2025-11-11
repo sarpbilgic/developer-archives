@@ -2,7 +2,7 @@
 
 > AI-Powered Semantic Search Engine for GitHub Repositories
 
-Developer Archives is a sophisticated backend system that enables semantic search across GitHub repositories using AI embeddings and vector similarity. The system automatically discovers, processes, and indexes repositories, making them searchable through natural language queries.
+Developer Archives is a sophisticated backend system that enables semantic search across GitHub repositories using AI embeddings and vector similarity. The system automatically discovers, processes, and indexes repositories, making them searchable through natural language queries. For the frontend code visit https://github.com/sarpbilgic/developer-archives-frontend
 
 ## 🎯 Overview
 
