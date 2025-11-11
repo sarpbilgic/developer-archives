@@ -1,0 +1,27 @@
+# Minimal requirements for Lambda Processor
+# ONLY what's needed to process GitHub repos and generate embeddings
+# Versions pinned to ensure pre-compiled wheels are available (no compilation needed)
+
+# Database
+sqlalchemy
+asyncpg
+pgvector
+sqlmodel
+pydantic<3.0.0  # Required by sqlmodel, pin to avoid compatibility issues
+
+# AWS
+boto3
+
+# AI/ML - Embeddings (with version pins for wheel availability)
+sentence-transformers>=2.2.0,<3.0.0
+numpy<2.0.0  # Pin to 1.x - version 2.x requires GCC 9.3+, Lambda has GCC 7.3.1
+
+# HTTP Client (for GitHub API)
+httpx
+
+# HTML/Text Processing
+beautifulsoup4
+
+# Utilities
+python-dotenv
+
