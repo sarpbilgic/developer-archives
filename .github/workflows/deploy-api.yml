@@ -18,6 +18,8 @@ on:
       - 'requirements-api.txt'
       - 'requirements-test.txt' 
       - 'tests/e2e/api_test.py' 
+      - 'deployment-helpers/download_model.py'
+      
 
 env:
   AWS_REGION: 'eu-central-1'
