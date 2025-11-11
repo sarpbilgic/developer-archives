@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/deploy-processor.yml'
       - 'app/tasks/processor.py'
       - 'app/services/data_processing_service.py'
       - 'app/data_access/repositories/project_repository.py'
