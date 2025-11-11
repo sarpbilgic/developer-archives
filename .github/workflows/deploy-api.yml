@@ -78,11 +78,11 @@ jobs:
     - name: Install E2E Test Dependencies
       run: |
         # Install ONLY the E2E test dependencies (httpx, pytest)
-        pip install -r requirements-e2e.txt
+        pip install -r requirements-test.txt
 
     - name: Run E2E Tests
       env:
-        API_BASE_URL: ${{ secrets.API_BASE_URL }}
+        API_BASE_URL: ${{ secrets.API_BASE_URL}}
       run: |
         # Run the E2E tests against the public URL
-        pytest tests_e2e/test_api_endpoints.py
+        pytest tests/e2e/api_test.py
