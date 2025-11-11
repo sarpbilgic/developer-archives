@@ -15,8 +15,8 @@ on:
       - 'app/services/readme_extractor.py'
       - 'Dockerfile.processor'
       - 'requirements-processor.txt' 
-      - 'requirements-test.txt' 
       - 'deployment-helpers/download_model.py'
+      
       
 
 env:
@@ -57,11 +57,13 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # --- FIX 3: Build and push in one command for ARM64 ---
+        # --- FIX 3: Build for arm64, load locally, then push ---
         docker buildx build --platform linux/arm64 \
-          --push \
+          --load \
           -t $ECR_REGISTRY/$ECR_REPOSITORY_PROCESSOR:$IMAGE_TAG \
           -f Dockerfile.processor .
+        
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_PROCESSOR:$IMAGE_TAG
         # --- END OF FIX 3 ---
         echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY_PROCESSOR:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
