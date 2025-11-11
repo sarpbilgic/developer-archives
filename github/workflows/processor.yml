@@ -1,0 +1,57 @@
+name: Deploy Processor Lambda to ECR
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/tasks/processor.py'
+      - 'app/services/data_processing_service.py'
+      - 'app/data_access/repositories/project_repository.py'
+      - 'app/models/project.py'
+      - 'app/external/embedding_client.py'
+      - 'app/external/s3_client.py'
+      - 'app/services/readme_extractor.py'
+      - 'Dockerfile.processor'
+      - 'requirements-processor.txt' 
+
+env:
+  AWS_REGION: 'eu-central-1'
+  ECR_REPOSITORY_PROCESSOR: 'developer-archives-processor' 
+  LAMBDA_FUNCTION_NAME_PROCESSOR: 'developer-archives-processor'
+
+jobs:
+  deploy-processor:
+    name: Build and Deploy Processor
+    runs-on: ubuntu-latest
+    environment: env
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Log in to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_PROCESSOR:$IMAGE_TAG -f Dockerfile.processor .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_PROCESSOR:$IMAGE_TAG
+        echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY_PROCESSOR:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+    - name: Update Lambda function code
+      run: |
+        aws lambda update-function-code \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME_PROCESSOR }} \
+          --image-uri ${{ steps.build-image.outputs.image_uri }}

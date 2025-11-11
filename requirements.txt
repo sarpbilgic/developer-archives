@@ -14,3 +14,4 @@ httpx
 beautifulsoup4
 aws-lambda-powertools
 mangum
+pytest
