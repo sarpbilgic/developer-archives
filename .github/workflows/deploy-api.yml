@@ -18,7 +18,9 @@ on:
       - 'requirements-api.txt'
       - 'requirements-test.txt' 
       - 'tests/e2e/api_test.py' 
-      - 'deployment-helpers/download_model.py'     
+      - 'deployment-helpers/download_model.py'
+
+      
 
 env:
   AWS_REGION: 'eu-central-1'
@@ -45,7 +47,8 @@ jobs:
       uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        # --- FIX: Corrected typo from aws-secret-key ---
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
     - name: Log in to Amazon ECR
@@ -61,6 +64,7 @@ jobs:
         push: true
         tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_API }}:${{ github.sha }}
         platforms: linux/arm64
+
         cache-from: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_API }}:buildcache
         cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_API }}:buildcache,mode=max
 
@@ -72,7 +76,7 @@ jobs:
       run: |
         aws lambda update-function-code \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME_API }} \
-          --image-uri ${{ steps.set-output.outputs.image_uri }} # <-- Use new output step
+          --image-uri ${{ steps.set-output.outputs.image_uri }} 
           
   e2e-test:
     name: Run E2E Tests on Deployed API
@@ -105,6 +109,7 @@ jobs:
         
         echo "Waiting 30 seconds for Lambda to finish cold start..."
         sleep 30
+
 
     - name: Run E2E Tests
       env:
