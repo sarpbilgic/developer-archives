@@ -47,7 +47,6 @@ jobs:
       uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        # --- FIX: Corrected typo from aws-secret-key ---
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
@@ -55,28 +54,27 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build, cache, and push image to Amazon ECR
+    # --- FIX: Reverted to manual buildx --load to fix manifest error ---
+    - name: Build, tag, and push image to Amazon ECR
       id: build-image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile.api
-        push: true
-        tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_API }}:${{ github.sha }}
-        platforms: linux/arm64
-
-        cache-from: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_API }}:buildcache
-        cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_API }}:buildcache,mode=max
-
-    - name: Set image_uri output
-      id: set-output
-      run: echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_API }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker buildx build --platform linux/arm64 \
+          --load \
+          -t $ECR_REGISTRY/$ECR_REPOSITORY_API:$IMAGE_TAG \
+          -f Dockerfile.api .
+        
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_API:$IMAGE_TAG
+        echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY_API:$IMAGE_TAG" >> $GITHUB_OUTPUT
+    # --- END OF FIX ---
 
     - name: Update Lambda function code
       run: |
         aws lambda update-function-code \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME_API }} \
-          --image-uri ${{ steps.set-output.outputs.image_uri }} 
+          --image-uri ${{ steps.build-image.outputs.image_uri }} 
           
   e2e-test:
     name: Run E2E Tests on Deployed API
@@ -109,7 +107,6 @@ jobs:
         
         echo "Waiting 30 seconds for Lambda to finish cold start..."
         sleep 30
-
 
     - name: Run E2E Tests
       env:
