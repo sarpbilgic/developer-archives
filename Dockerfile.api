@@ -23,7 +23,7 @@ RUN python -m pip install --upgrade pip && \
         --extra-index-url ${TORCH_INDEX_URL} \
         -r requirements-api.txt
 
-COPY scripts/download_model.py /tmp/download_model.py
+COPY deployment-helpers/download_model.py /tmp/download_model.py
 
 RUN PYTHONPATH=/install_dir:$PYTHONPATH python /tmp/download_model.py
 
@@ -39,4 +39,4 @@ COPY --from=builder /install_dir/ /var/task/
 
 COPY app/ /var/task/app/
 
-CMD ["app.tasks.api.handler"]
+CMD ["app.main.handler"]
