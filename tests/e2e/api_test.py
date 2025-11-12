@@ -1,14 +1,9 @@
 import os
 import pytest
 import httpx
-from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, ValidationError, Field
-from dotenv import load_dotenv
+from typing import List, Optional, Dict, Any
 
-# --- Schema Validation ---
-# We'll redefine the API's response schemas here.
-# This is a best practice for E2E tests, as it validates
-# that your deployed API *exactly* matches its public contract.
 
 class SearchResultItem(BaseModel):
     """Schema for a single item in the search results."""
@@ -23,7 +18,7 @@ class SearchResultItem(BaseModel):
     owner_avatar_url: Optional[str]
     owner_login: str
     owner_url: str
-    pushed_at_github: Optional[Any] # Use Any for flexibility in datetime parsing
+    pushed_at_github: Optional[Any] 
     similarity: Optional[float]
 
 class RepositoryDetail(BaseModel):
@@ -46,16 +41,10 @@ class RepositoryDetail(BaseModel):
     owner_url: str
     owner_type: str
 
-# --- Test Setup ---
-
-# Get the deployed API's URL from an environment variable.
-# In GitHub Actions, this will be set from a Secret.
-
-load_dotenv()
 
 API_BASE_URL = os.environ.get("API_BASE_URL")
 
-# Skip all tests in this file if the URL isn't provided
+
 if not API_BASE_URL:
     pytest.skip(
         "Skipping E2E tests: API_BASE_URL environment variable not set.", 
@@ -65,7 +54,8 @@ if not API_BASE_URL:
 @pytest.fixture(scope="module")
 def api_client():
     """Create a persistent httpx client for all E2E tests."""
-    with httpx.Client(base_url=API_BASE_URL, timeout=20.0, follow_redirects=True) as client:
+    # --- FIX: Increased timeout from 20 to 90 seconds for Lambda cold start ---
+    with httpx.Client(base_url=API_BASE_URL, timeout=60.0, follow_redirects=True) as client:
         yield client
 
 # --- E2E Tests ---
@@ -81,7 +71,7 @@ def test_search_missing_query(api_client: httpx.Client):
     """Tests that the search endpoint requires a query parameter."""
     print(f"Testing GET {API_BASE_URL}/api/v1/search (expect 422)")
     response = api_client.get("/api/v1/search")
-    assert response.status_code == 422  # FastAPI validation error
+    assert response.status_code == 422 
 
 def test_search_and_validate_schema(api_client: httpx.Client):
     """Tests a valid search and validates the response schema."""
@@ -94,7 +84,6 @@ def test_search_and_validate_schema(api_client: httpx.Client):
         results = response.json()
         assert isinstance(results, list)
         
-        # If the database has items, validate the first one
         if results:
             print(f"Found {len(results)} results, validating schema of first item.")
             SearchResultItem.model_validate(results[0])
@@ -113,8 +102,6 @@ def test_get_project_details_and_readme(api_client: httpx.Client):
     This test is skipped if the search returns no results.
     """
     print("\n--- Chained Test: test_get_project_details_and_readme ---")
-    # First, get a valid project ID from search.
-    # We use a query that is very likely to return our indexed FastAPI project.
     search_resp = api_client.get("/api/v1/search?query=fastapi&topics=python")
     assert search_resp.status_code == 200
     results = search_resp.json()
@@ -122,19 +109,17 @@ def test_get_project_details_and_readme(api_client: httpx.Client):
     if not results:
         pytest.skip("Search returned no results. Cannot test project detail/readme endpoints.")
 
-    # Get the top result (most likely the one we want)
     project_id = results[0].get("id")
     project_name = results[0].get("full_name")
     assert isinstance(project_id, int)
     print(f"Found project '{project_name}' (ID: {project_id}) from search.")
 
-    # --- 1. Test Project Detail Endpoint ---
+
     print(f"Testing GET /api/v1/projects/{project_id}")
     detail_resp = api_client.get(f"/api/v1/projects/{project_id}")
     
     assert detail_resp.status_code == 200
     try:
-        # Validate it matches the RepositoryDetail schema
         RepositoryDetail.model_validate(detail_resp.json())
         print("Project detail schema validated.")
     except ValidationError as e:
