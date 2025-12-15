@@ -16,3 +16,5 @@ lambda_packages/
 manuel_ingest.py
 lambda_deployers/
 scripts/
+rds_backup.sql
+rds_backup_utf8.sql
