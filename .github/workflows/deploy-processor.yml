@@ -20,7 +20,8 @@ jobs:
   deploy-processor:
     name: Build and Deploy Processor
     runs-on: ubuntu-latest
-    
+    # REMOVED: environment: env (Fixes credentials)
+
     steps:
     - name: Check out code
       uses: actions/checkout@v4
@@ -42,19 +43,19 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    # --- OPTIMIZED BUILD STEP ---
+    # --- FAST BUILD + MANIFEST FIX ---
     - name: Build and push to ECR with Cache
       id: build-image
       uses: docker/build-push-action@v5
       with:
         context: .
-        # UPDATED: Pointing to the ONNX file
         file: Dockerfile.processor.onnx
         push: true
         tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_PROCESSOR }}:${{ github.sha }}
         platforms: linux/arm64
+        # FIXES MANIFEST ERROR
         provenance: false
-        # The Magic Part: Use GitHub Actions Cache
+        # ENABLE CACHING
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
