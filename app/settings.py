@@ -2,6 +2,8 @@ import os
 import boto3
 import logging
 from dotenv import load_dotenv
+from functools import cached_property
+
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -57,7 +59,16 @@ class Settings:
             
         if url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        
+        if "?" in url:
+            base_url, params = url.split("?", 1)
+            param_pairs = [p for p in params.split("&") if not p.startswith(("sslmode=", "channel_binding="))]
+            if param_pairs:
+                url = f"{base_url}?{'&'.join(param_pairs)}"
+            else:
+                url = base_url
             
         return url
+
 
 settings = Settings()

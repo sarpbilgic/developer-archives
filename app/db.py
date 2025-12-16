@@ -8,12 +8,13 @@ engine = create_async_engine(
     settings.database_url, 
     echo=False, 
     future=True,
-    pool_size=2,          
-    max_overflow=1,       
+    pool_size=20,          
+    max_overflow=5,       
     pool_pre_ping=True,  
     pool_recycle=1800,    
     pool_timeout=10,      
     connect_args={
+        "ssl": "require",  
         "server_settings": {
             "application_name": "developer-archives-lambda",
             "statement_timeout": "300000", 
