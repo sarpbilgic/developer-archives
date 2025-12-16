@@ -1,0 +1,34 @@
+# API requirements - ONNX Runtime optimized
+# Uses ONNX Runtime instead of PyTorch for ~10x smaller image size
+# Produces identical embeddings to PyTorch version
+
+# Web Framework
+fastapi
+mangum
+uvicorn[standard]
+
+# Database
+sqlalchemy
+asyncpg
+pgvector
+sqlmodel
+pydantic
+
+# AWS
+boto3
+python-dotenv
+httpx
+
+# AI/ML - ONNX Runtime for embeddings
+onnxruntime>=1.16.0
+optimum[onnxruntime]>=1.14.0
+transformers>=4.35.0
+tokenizers>=0.15.0
+numpy<2.0.0
+
+# HTML/Text Processing
+beautifulsoup4
+
+# Lambda
+aws-lambda-powertools
+

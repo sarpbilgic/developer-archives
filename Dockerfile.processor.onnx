@@ -1,0 +1,49 @@
+# ONNX Runtime optimized Dockerfile for Lambda Processor
+# ~10x smaller than PyTorch version while producing identical embeddings
+
+FROM python:3.11-slim-bookworm AS builder
+
+ARG TARGETARCH=arm64
+WORKDIR /var/task
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TOKENIZERS_PARALLELISM=false \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1
+
+COPY requirements-processor-onnx.txt .
+
+# Install ONNX Runtime dependencies (NO PyTorch needed!)
+RUN python -m pip install --upgrade pip && \
+    pip install \
+        --platform manylinux2014_aarch64 \
+        --target="/install_dir" \
+        --only-binary=:all: \
+        --no-cache-dir \
+        -r requirements-processor-onnx.txt
+
+# Download and export model to ONNX format
+COPY deployment-helpers/download_model_onnx.py /tmp/download_model_onnx.py
+
+RUN PYTHONPATH=/install_dir:$PYTHONPATH python /tmp/download_model_onnx.py
+
+# Final stage - Lambda runtime
+FROM public.ecr.aws/lambda/python:3.11-arm64
+
+WORKDIR /var/task
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    MODEL_PATH=/var/task/model \
+    # Use ONNX embedding client
+    EMBEDDING_CLIENT=onnx
+
+# Copy installed packages and model
+COPY --from=builder /install_dir/ /var/task/
+
+# Copy application code
+COPY app/ /var/task/app/
+
+CMD ["app.tasks.processor.handler"]
+

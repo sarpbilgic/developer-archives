@@ -86,6 +86,13 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v4
 
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -96,17 +103,22 @@ jobs:
         # Install ONLY the E2E test dependencies (httpx, pytest)
         pip install -r requirements-test.txt
 
+    - name: Wait for Lambda to be ready
+      run: |
+        echo "Waiting for Lambda function to be ready after deployment..."
+        aws lambda wait function-updated --function-name ${{ env.LAMBDA_FUNCTION_NAME_API }} || true
+        sleep 5
+
     - name: Warm up Lambda Endpoint
       env:
         API_BASE_URL: ${{ secrets.API_BASE_URL }}
       run: |
-        echo "Sending warm-up request to ${{ env.API_BASE_URL }}/"
-        # This will likely time out or fail, but that's OK.
-        # We use 'curl -m 10 ... || true' to trigger the cold start and ignore failure.
-        curl -m 10 "${{ env.API_BASE_URL }}/" || true
+        echo "Sending warm-up request to $API_BASE_URL/health"
+        # Use longer timeout (90s) to handle cold start via Lambda Function URL
+        curl -m 90 "$API_BASE_URL/health" || true
         
-        echo "Waiting 30 seconds for Lambda to finish cold start..."
-        sleep 30
+        echo "Waiting 10 seconds for Lambda to stabilize..."
+        sleep 10
 
     - name: Run E2E Tests
       env:

@@ -1,0 +1,30 @@
+# Minimal requirements for Lambda Processor - ONNX Runtime optimized
+# Uses ONNX Runtime instead of PyTorch for ~10x smaller image size
+# Produces identical embeddings to PyTorch version
+
+# Database
+sqlalchemy
+asyncpg
+pgvector
+sqlmodel
+pydantic<3.0.0
+
+# AWS
+boto3
+
+# AI/ML - ONNX Runtime for embeddings (MUCH smaller than PyTorch)
+onnxruntime>=1.16.0
+optimum[onnxruntime]>=1.14.0
+transformers>=4.35.0
+tokenizers>=0.15.0
+numpy<2.0.0
+
+# HTTP Client (for GitHub API)
+httpx
+
+# HTML/Text Processing
+beautifulsoup4
+
+# Utilities
+python-dotenv
+
