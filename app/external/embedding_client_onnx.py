@@ -11,10 +11,16 @@ import logging
 import numpy as np
 from typing import List, Optional
 
-
 import onnxruntime as ort
 from transformers import AutoTokenizer
 from optimum.onnxruntime import ORTModelForFeatureExtraction
+
+# --- CRITICAL FIX: Disable Info/Warning logs globally to prevent Lambda crash ---
+try:
+    ort.set_default_logger_severity(3)
+except Exception as e:
+    pass
+# -----------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 
@@ -53,15 +59,14 @@ class EmbeddingClientONNX:
         if model_path is None:
             model_path = os.getenv('MODEL_PATH', '/var/task/model')
         
-        # 1. Create strict SessionOptions to prevent the Logger crash and CPU errors
+        # Create strict SessionOptions
         sess_options = ort.SessionOptions()
-        sess_options.log_severity_level = 3  # 3 = ERROR (suppresses warnings that cause the crash)
-        sess_options.intra_op_num_threads = 1 # Force single thread to stop CPU probing
+        sess_options.log_severity_level = 3  # 3 = ERROR
+        sess_options.intra_op_num_threads = 1
         sess_options.inter_op_num_threads = 1
         
         if os.path.exists(model_path):
             logger.info(f"Loading ONNX embedding model from {model_path}")
-            # Load ONNX model with explicit session options
             self.model = ORTModelForFeatureExtraction.from_pretrained(
                 model_path,
                 provider='CPUExecutionProvider',
@@ -73,7 +78,6 @@ class EmbeddingClientONNX:
             logger.warning(f"Model path {model_path} does not exist")
             logger.info(f"Loading ONNX model from Hugging Face: '{model_name}'")
             
-            # Export and load from HuggingFace
             self.model = ORTModelForFeatureExtraction.from_pretrained(
                 model_name,
                 export=True,
@@ -107,7 +111,6 @@ class EmbeddingClientONNX:
         return embeddings[0].tolist()
 
     def get_embeddings_batch(self, texts: List[str]) -> List[Optional[List[float]]]:
-        results = []
         valid_texts = []
         valid_indices = []
         
