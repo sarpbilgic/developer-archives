@@ -37,7 +37,11 @@ ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     MODEL_PATH=/var/task/model \
     # Use ONNX embedding client
-    EMBEDDING_CLIENT=onnx
+    EMBEDDING_CLIENT=onnx \
+    # ONNX Runtime settings for Lambda ARM64
+    ORT_LOGGING_LEVEL=WARNING \
+    OMP_NUM_THREADS=1 \
+    OMP_WAIT_POLICY=PASSIVE
 
 # Copy installed packages and model
 COPY --from=builder /install_dir/ /var/task/

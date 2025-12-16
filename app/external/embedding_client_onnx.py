@@ -11,6 +11,11 @@ import logging
 import numpy as np
 from typing import List, Optional
 
+# Initialize ONNX Runtime BEFORE importing optimum to avoid logging issues on Lambda
+# This fixes: "Attempt to use DefaultLogger but none has been registered"
+import onnxruntime as ort
+ort.set_default_logger_severity(3)  # 3 = WARNING, suppresses info/debug
+
 from transformers import AutoTokenizer
 from optimum.onnxruntime import ORTModelForFeatureExtraction
 
