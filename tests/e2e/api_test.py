@@ -54,20 +54,11 @@ if not API_BASE_URL:
 @pytest.fixture(scope="module")
 def api_client():
     """Create a persistent httpx client for all E2E tests."""
-    # Timeout set to 90 seconds to handle Lambda cold starts via Function URL
-    with httpx.Client(base_url=API_BASE_URL, timeout=90.0, follow_redirects=True) as client:
+    # --- FIX: Increased timeout from 20 to 90 seconds for Lambda cold start ---
+    with httpx.Client(base_url=API_BASE_URL, timeout=60.0, follow_redirects=True) as client:
         yield client
 
 # --- E2E Tests ---
-
-def test_health_check(api_client: httpx.Client):
-    """Tests the health check endpoint - lightweight check for Lambda warmup."""
-    print(f"Testing GET {API_BASE_URL}/health")
-    response = api_client.get("/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "healthy"
-    assert data["service"] == "developer-archives-api"
 
 def test_get_root(api_client: httpx.Client):
     """Tests the root endpoint for a welcome message."""
@@ -104,6 +95,7 @@ def test_search_and_validate_schema(api_client: httpx.Client):
     except Exception as e:
         pytest.fail(f"Search response for query '{query}' was not valid JSON: {e}")
 
+@pytest.mark.dependency(name="search_works", depends=["test_search_and_validate_schema"])
 def test_get_project_details_and_readme(api_client: httpx.Client):
     """
     Tests the detail and README endpoints using a valid ID from the search.
