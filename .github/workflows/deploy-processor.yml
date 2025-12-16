@@ -6,17 +6,10 @@ on:
       - main
     paths:
       - '.github/workflows/deploy-processor.yml'
-      - 'app/tasks/processor.py'
-      - 'app/services/data_processing_service.py'
-      - 'app/data_access/repositories/project_repository.py'
-      - 'app/models/project.py'
-      - 'app/external/embedding_client.py'
-      - 'app/external/s3_client.py'
-      - 'app/services/readme_extractor.py'
-      - 'Dockerfile.processor'
-      - 'requirements-processor.txt' 
-      - 'deployment-helpers/download_model.py'
-      
+      - 'app/**'
+      - 'Dockerfile.processor.onnx'
+      - 'requirements-processor-onnx.txt'
+      - 'deployment-helpers/**'
 
 env:
   AWS_REGION: 'eu-central-1'
@@ -27,7 +20,7 @@ jobs:
   deploy-processor:
     name: Build and Deploy Processor
     runs-on: ubuntu-latest
-    environment: env
+    
     steps:
     - name: Check out code
       uses: actions/checkout@v4
@@ -49,25 +42,24 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build, cache, and push image to Amazon ECR
+    # --- OPTIMIZED BUILD STEP ---
+    - name: Build and push to ECR with Cache
       id: build-image
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: ./Dockerfile.processor
+        # UPDATED: Pointing to the ONNX file
+        file: Dockerfile.processor.onnx
         push: true
         tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_PROCESSOR }}:${{ github.sha }}
         platforms: linux/arm64
-        cache-from: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_PROCESSOR }}:buildcache
-        cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_PROCESSOR }}:buildcache,mode=max
-
-    - name: Set image_uri output
-      id: set-output
-      run: echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_PROCESSOR }}:${{ github.sha }}" >> $GITHUB_OUTPUT
-
+        provenance: false
+        # The Magic Part: Use GitHub Actions Cache
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
 
     - name: Update Lambda function code
       run: |
         aws lambda update-function-code \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME_PROCESSOR }} \
-          --image-uri ${{ steps.set-output.outputs.image_uri }}
+          --image-uri ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_PROCESSOR }}:${{ github.sha }}
