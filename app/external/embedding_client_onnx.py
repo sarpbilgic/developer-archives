@@ -11,16 +11,19 @@ import logging
 import numpy as np
 from typing import List, Optional
 
+# 1. Import ONNX Runtime FIRST
 import onnxruntime as ort
-from transformers import AutoTokenizer
-from optimum.onnxruntime import ORTModelForFeatureExtraction
 
-# --- CRITICAL FIX: Disable Info/Warning logs globally to prevent Lambda crash ---
+# 2. APPLY FIX IMMEDIATELY (Before importing optimum/transformers)
+# This prevents the "DefaultLogger" crash by silencing the logger before it initializes.
 try:
     ort.set_default_logger_severity(3)
 except Exception as e:
     pass
-# -----------------------------------------------------------------------------
+
+# 3. Now it is safe to import the rest
+from transformers import AutoTokenizer
+from optimum.onnxruntime import ORTModelForFeatureExtraction
 
 logger = logging.getLogger(__name__)
 
