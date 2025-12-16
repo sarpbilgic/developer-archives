@@ -12,42 +12,65 @@ ENV PIP_NO_CACHE_DIR=1 \
     OMP_NUM_THREADS=1 \
     OPENBLAS_NUM_THREADS=1
 
-COPY requirements-processor-onnx.txt .
+# --- 1. Install Export Dependencies (System-wide, NOT in /install_dir) ---
+# We need torch to export the model, but we don't want it in the final image.
+RUN pip install \
+    "torch" \
+    "sentence-transformers" \
+    "optimum[onnxruntime]"
 
-# Install ONNX Runtime dependencies (NO PyTorch needed!)
-RUN python -m pip install --upgrade pip && \
-    pip install \
-        --platform manylinux2014_aarch64 \
-        --target="/install_dir" \
-        --only-binary=:all: \
-        --no-cache-dir \
-        -r requirements-processor-onnx.txt
-
-# Download and export model to ONNX format
+# --- 2. Export the Model ---
 COPY deployment-helpers/download_model_onnx.py /tmp/download_model_onnx.py
+# Save to a temp folder so we can copy purely the model later
+RUN python /tmp/download_model_onnx.py --save_path /tmp/model_output
 
-RUN PYTHONPATH=/install_dir:$PYTHONPATH python /tmp/download_model_onnx.py
+# --- 3. Install Runtime Dependencies (Into /install_dir) ---
+COPY requirements-processor-onnx.txt .
+RUN pip install \
+    --platform manylinux2014_aarch64 \
+    --target="/install_dir" \
+    --only-binary=:all: \
+    --no-cache-dir \
+    -r requirements-processor-onnx.txt
+
+# --- 4. CRITICAL: Prune PyTorch ---
+# optimum installs torch as a dependency. We must delete it to save space.
+# We also delete nvidia libs which are huge and useless on CPU Lambda.
+RUN rm -rf \
+    /install_dir/torch \
+    /install_dir/sentence_transformers \
+    /install_dir/nvidia \
+    /install_dir/triton \
+    /install_dir/caffe2
+
+# Remove compiled files to save space
+RUN find /install_dir -name '__pycache__' -type d -exec rm -r {} +
 
 # Final stage - Lambda runtime
 FROM public.ecr.aws/lambda/python:3.11-arm64
 
 WORKDIR /var/task
 
+# Prevent ONNX Runtime from crashing on Lambda
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     MODEL_PATH=/var/task/model \
-    # Use ONNX embedding client
     EMBEDDING_CLIENT=onnx \
-    # ONNX Runtime settings for Lambda ARM64
-    ORT_LOGGING_LEVEL=WARNING \
+    # Fix for "DefaultLogger" crash
+    ORT_LOGGING_LEVEL=3 \
+    # Fix for "cpuinfo" crash
+    ORT_INTRA_OP_NUM_THREADS=1 \
+    ORT_INTER_OP_NUM_THREADS=1 \
     OMP_NUM_THREADS=1 \
     OMP_WAIT_POLICY=PASSIVE
 
-# Copy installed packages and model
+# Copy installed packages (Clean, without PyTorch)
 COPY --from=builder /install_dir/ /var/task/
+
+# Copy the exported ONNX model
+COPY --from=builder /tmp/model_output /var/task/model
 
 # Copy application code
 COPY app/ /var/task/app/
 
 CMD ["app.tasks.processor.handler"]
-

@@ -11,25 +11,18 @@ import logging
 import numpy as np
 from typing import List, Optional
 
-# Initialize ONNX Runtime BEFORE importing optimum to avoid logging issues on Lambda
-# This fixes: "Attempt to use DefaultLogger but none has been registered"
-import onnxruntime as ort
-ort.set_default_logger_severity(3)  # 3 = WARNING, suppresses info/debug
 
+import onnxruntime as ort
 from transformers import AutoTokenizer
 from optimum.onnxruntime import ORTModelForFeatureExtraction
 
 logger = logging.getLogger(__name__)
-
 
 def mean_pooling(model_output: np.ndarray, attention_mask: np.ndarray) -> np.ndarray:
     """
     Mean pooling - same as sentence-transformers implementation.
     Takes the mean of all token embeddings, weighted by attention mask.
     """
-    # model_output shape: (batch_size, seq_len, hidden_size)
-    # attention_mask shape: (batch_size, seq_len)
-    
     # Expand attention mask for broadcasting
     input_mask_expanded = np.expand_dims(attention_mask, axis=-1)
     input_mask_expanded = np.broadcast_to(
@@ -60,18 +53,19 @@ class EmbeddingClientONNX:
         if model_path is None:
             model_path = os.getenv('MODEL_PATH', '/var/task/model')
         
+        # 1. Create strict SessionOptions to prevent the Logger crash and CPU errors
+        sess_options = ort.SessionOptions()
+        sess_options.log_severity_level = 3  # 3 = ERROR (suppresses warnings that cause the crash)
+        sess_options.intra_op_num_threads = 1 # Force single thread to stop CPU probing
+        sess_options.inter_op_num_threads = 1
+        
         if os.path.exists(model_path):
             logger.info(f"Loading ONNX embedding model from {model_path}")
-            try:
-                model_files = os.listdir(model_path)[:10]
-                logger.debug(f"Model directory contents: {model_files}")
-            except Exception as e:
-                logger.debug(f"Could not list model directory: {e}")
-            
-            # Load ONNX model and tokenizer from local path
+            # Load ONNX model with explicit session options
             self.model = ORTModelForFeatureExtraction.from_pretrained(
                 model_path,
-                provider='CPUExecutionProvider'
+                provider='CPUExecutionProvider',
+                session_options=sess_options
             )
             self.tokenizer = AutoTokenizer.from_pretrained(model_path)
             logger.info("ONNX embedding model loaded from cache successfully")
@@ -83,20 +77,17 @@ class EmbeddingClientONNX:
             self.model = ORTModelForFeatureExtraction.from_pretrained(
                 model_name,
                 export=True,
-                provider='CPUExecutionProvider'
+                provider='CPUExecutionProvider',
+                session_options=sess_options
             )
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             logger.info(f"ONNX model '{model_name}' loaded successfully")
 
     def get_embedding(self, text: str) -> Optional[List[float]]:
-        """
-        Generate embedding for a single text.
-        Returns 768-dimensional normalized vector (identical to PyTorch version).
-        """
         if not text or not isinstance(text, str) or not text.strip():
             return None
         
-        # Tokenize (same as sentence-transformers)
+        # Tokenize
         inputs = self.tokenizer(
             text,
             padding=True,
@@ -108,28 +99,18 @@ class EmbeddingClientONNX:
         # Run ONNX inference
         outputs = self.model(**inputs)
         
-        # Get the last hidden state
-        # outputs is a dict-like object with 'last_hidden_state'
+        # Mean pooling and Normalize
         last_hidden_state = outputs.last_hidden_state
-        
-        # Mean pooling (same as sentence-transformers all-mpnet-base-v2)
         embeddings = mean_pooling(last_hidden_state, inputs['attention_mask'])
-        
-        # L2 normalize (same as sentence-transformers)
         embeddings = normalize(embeddings)
         
-        # Return as list (batch size is 1)
         return embeddings[0].tolist()
 
     def get_embeddings_batch(self, texts: List[str]) -> List[Optional[List[float]]]:
-        """
-        Generate embeddings for multiple texts efficiently.
-        """
         results = []
         valid_texts = []
         valid_indices = []
         
-        # Filter out invalid texts
         for i, text in enumerate(texts):
             if text and isinstance(text, str) and text.strip():
                 valid_texts.append(text)
@@ -138,7 +119,6 @@ class EmbeddingClientONNX:
         if not valid_texts:
             return [None] * len(texts)
         
-        # Batch tokenize
         inputs = self.tokenizer(
             valid_texts,
             padding=True,
@@ -147,15 +127,10 @@ class EmbeddingClientONNX:
             return_tensors='np'
         )
         
-        # Run ONNX inference
         outputs = self.model(**inputs)
-        last_hidden_state = outputs.last_hidden_state
-        
-        # Mean pooling and normalize
-        embeddings = mean_pooling(last_hidden_state, inputs['attention_mask'])
+        embeddings = mean_pooling(outputs.last_hidden_state, inputs['attention_mask'])
         embeddings = normalize(embeddings)
         
-        # Build result list with None for invalid inputs
         results = [None] * len(texts)
         for idx, embedding in zip(valid_indices, embeddings):
             results[idx] = embedding.tolist()
@@ -163,18 +138,12 @@ class EmbeddingClientONNX:
         return results
 
 
-# Singleton pattern for Lambda reuse
 _cached_client: Optional[EmbeddingClientONNX] = None
 
-
 def get_embedding_client() -> EmbeddingClientONNX:
-    """Get or create the cached embedding client."""
     global _cached_client
-    
     if _cached_client is None:
-        logger.info("Cold start: Initializing ONNX EmbeddingClient and loading model...")
+        logger.info("Cold start: Initializing ONNX EmbeddingClient...")
         _cached_client = EmbeddingClientONNX()
-        logger.info("ONNX model loaded and cached for future requests.")
-    
+        logger.info("ONNX model loaded.")
     return _cached_client
-

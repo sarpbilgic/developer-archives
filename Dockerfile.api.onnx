@@ -1,53 +1,59 @@
-# ONNX Runtime optimized Dockerfile for Lambda API
-# ~10x smaller than PyTorch version while producing identical embeddings
-
+# Stage 1: Builder
 FROM python:3.11-slim-bookworm AS builder
 
 ARG TARGETARCH=arm64
 WORKDIR /var/task
 
 ENV PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    TOKENIZERS_PARALLELISM=false \
-    OMP_NUM_THREADS=1 \
-    OPENBLAS_NUM_THREADS=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-COPY requirements-api-onnx.txt .
+# --- 1. Install Export Dependencies (System-wide, NOT in /install_dir) ---
+# We install these just to run the conversion script. They WON'T be copied to the final image.
+RUN pip install \
+    "torch" \
+    "sentence-transformers" \
+    "optimum[onnxruntime]"
 
-# Install ONNX Runtime dependencies (NO PyTorch needed!)
-RUN python -m pip install --upgrade pip && \
-    pip install \
-        --platform manylinux2014_aarch64 \
-        --target="/install_dir" \
-        --only-binary=:all: \
-        --no-cache-dir \
-        -r requirements-api-onnx.txt
-
-# Download and export model to ONNX format
+# --- 2. Export the Model ---
 COPY deployment-helpers/download_model_onnx.py /tmp/download_model_onnx.py
+# Save to a temporary folder so we can copy ONLY the model later
+RUN python /tmp/download_model_onnx.py --save_path /tmp/model_output
 
-RUN PYTHONPATH=/install_dir:$PYTHONPATH python /tmp/download_model_onnx.py
+# --- 3. Install Runtime Dependencies (Into /install_dir) ---
+# Only install what we need for the app to RUN.
+COPY requirements-api-onnx.txt .
+# CRITICAL: We tell pip NOT to install dependencies (like torch) that optimum might try to pull in again
+RUN pip install \
+    --platform manylinux2014_aarch64 \
+    --target="/install_dir" \
+    --only-binary=:all: \
+    --no-cache-dir \
+    --no-deps \
+    -r requirements-api-onnx.txt
+# Note: --no-deps is risky if you miss something. 
+# Better approach: Manually remove torch after install:
+# RUN rm -rf /install_dir/torch /install_dir/caffe2 /install_dir/nv*
 
-# Final stage - Lambda runtime
+# Stage 2: Runtime
 FROM public.ecr.aws/lambda/python:3.11-arm64
 
 WORKDIR /var/task
 
+# Prevent ONNX Runtime from crashing on Lambda
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     MODEL_PATH=/var/task/model \
-    # Use ONNX embedding client
     EMBEDDING_CLIENT=onnx \
-    # ONNX Runtime settings for Lambda ARM64
-    ORT_LOGGING_LEVEL=WARNING \
-    OMP_NUM_THREADS=1 \
-    OMP_WAIT_POLICY=PASSIVE
+    ORT_LOGGING_LEVEL=3 \
+    ORT_INTRA_OP_NUM_THREADS=1 \
+    ORT_INTER_OP_NUM_THREADS=1
 
-# Copy installed packages and model
+# Copy pure dependencies (No PyTorch)
 COPY --from=builder /install_dir/ /var/task/
 
-# Copy application code
+# Copy the exported model
+COPY --from=builder /tmp/model_output /var/task/model
+
 COPY app/ /var/task/app/
 
 CMD ["app.main.handler"]
-
