@@ -1,9 +1,3 @@
-Here is the corrected and complete deployment-helpers/download_model_onnx.py.
-
-This version includes the critical fix (adding argparse) so it respects the --save_path argument passed by your Dockerfile. This solves the "file not found" error during your build.
-
-Python
-
 """
 Download and export the sentence-transformer model to ONNX format.
 This produces identical embeddings to PyTorch but with much smaller runtime size.
@@ -18,9 +12,8 @@ from pathlib import Path
 from optimum.onnxruntime import ORTModelForFeatureExtraction
 from transformers import AutoTokenizer
 from huggingface_hub import hf_hub_download
-
-# Configure logging
 import logging
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -105,7 +98,8 @@ def verify_model(save_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_id", default="sentence-transformers/all-mpnet-base-v2")
-    parser.add_argument("--save_path", default="/install_dir/model") # Default fallback
+    # This allows the Dockerfile to specify where to save the model
+    parser.add_argument("--save_path", default="/install_dir/model") 
     args = parser.parse_args()
 
     # Create directory if it doesn't exist
