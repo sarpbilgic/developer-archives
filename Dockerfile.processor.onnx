@@ -67,11 +67,16 @@ ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     MODEL_PATH=/var/task/model \
     EMBEDDING_CLIENT=onnx \
-    ORT_LOGGING_LEVEL=3 \
+    ORT_LOGGING_LEVEL=4 \
     ORT_INTRA_OP_NUM_THREADS=1 \
     ORT_INTER_OP_NUM_THREADS=1 \
     OMP_NUM_THREADS=1 \
-    OMP_WAIT_POLICY=PASSIVE
+    OMP_WAIT_POLICY=PASSIVE \
+    # NEW: Disable ONNX Runtime telemetry and CPU detection
+    ORT_DISABLE_TELEMETRY=1 \
+    # NEW: Force single-threaded execution
+    MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1
 
 COPY --from=builder /install_dir/ /var/task/
 COPY --from=builder /tmp/model_output /var/task/model

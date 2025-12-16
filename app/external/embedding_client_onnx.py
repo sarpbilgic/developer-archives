@@ -1,4 +1,3 @@
-# app/external/embedding_client_onnx.py
 """
 ONNX Runtime-based embedding client.
 Produces identical embeddings to PyTorch version but with ~10x smaller runtime.
@@ -8,20 +7,33 @@ Model: all-mpnet-base-v2 (768 dimensions)
 
 import os
 import logging
-import numpy as np
-from typing import List, Optional
 
-# 1. Import ONNX Runtime FIRST
+# ============================================================================
+# CRITICAL FIX: Initialize ONNX Runtime BEFORE any other imports
+# ============================================================================
+# This MUST happen before importing transformers, optimum, or any library
+# that might trigger ONNX Runtime initialization internally.
+
 import onnxruntime as ort
 
-# 2. APPLY FIX IMMEDIATELY (Before importing optimum/transformers)
-# This prevents the "DefaultLogger" crash by silencing the logger before it initializes.
-try:
-    ort.set_default_logger_severity(3)
-except Exception as e:
-    pass
+# Disable logging completely to prevent "DefaultLogger" crash
+ort.set_default_logger_severity(4)  # 4 = FATAL (effectively disables logging)
 
-# 3. Now it is safe to import the rest
+# Create a session options object with strict settings for Lambda
+_GLOBAL_SESSION_OPTIONS = ort.SessionOptions()
+_GLOBAL_SESSION_OPTIONS.log_severity_level = 4  # FATAL
+_GLOBAL_SESSION_OPTIONS.intra_op_num_threads = 1
+_GLOBAL_SESSION_OPTIONS.inter_op_num_threads = 1
+
+# Suppress graph optimization warnings
+_GLOBAL_SESSION_OPTIONS.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+
+# ============================================================================
+# Now safe to import everything else
+# ============================================================================
+
+import numpy as np
+from typing import List, Optional
 from transformers import AutoTokenizer
 from optimum.onnxruntime import ORTModelForFeatureExtraction
 
@@ -32,14 +44,12 @@ def mean_pooling(model_output: np.ndarray, attention_mask: np.ndarray) -> np.nda
     Mean pooling - same as sentence-transformers implementation.
     Takes the mean of all token embeddings, weighted by attention mask.
     """
-    # Expand attention mask for broadcasting
     input_mask_expanded = np.expand_dims(attention_mask, axis=-1)
     input_mask_expanded = np.broadcast_to(
         input_mask_expanded, 
         model_output.shape
     ).astype(np.float32)
     
-    # Sum embeddings weighted by mask
     sum_embeddings = np.sum(model_output * input_mask_expanded, axis=1)
     sum_mask = np.clip(input_mask_expanded.sum(axis=1), a_min=1e-9, a_max=None)
     
@@ -62,18 +72,12 @@ class EmbeddingClientONNX:
         if model_path is None:
             model_path = os.getenv('MODEL_PATH', '/var/task/model')
         
-        # Create strict SessionOptions
-        sess_options = ort.SessionOptions()
-        sess_options.log_severity_level = 3  # 3 = ERROR
-        sess_options.intra_op_num_threads = 1
-        sess_options.inter_op_num_threads = 1
-        
         if os.path.exists(model_path):
             logger.info(f"Loading ONNX embedding model from {model_path}")
             self.model = ORTModelForFeatureExtraction.from_pretrained(
                 model_path,
                 provider='CPUExecutionProvider',
-                session_options=sess_options
+                session_options=_GLOBAL_SESSION_OPTIONS  # Use global session options
             )
             self.tokenizer = AutoTokenizer.from_pretrained(model_path)
             logger.info("ONNX embedding model loaded from cache successfully")
@@ -85,7 +89,7 @@ class EmbeddingClientONNX:
                 model_name,
                 export=True,
                 provider='CPUExecutionProvider',
-                session_options=sess_options
+                session_options=_GLOBAL_SESSION_OPTIONS  # Use global session options
             )
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             logger.info(f"ONNX model '{model_name}' loaded successfully")
